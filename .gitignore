@@ -1,0 +1,28 @@
+# Entornos virtuales y dependencias
+.venv/
+venv/
+env/
+.python-version
+uv.lock
+cache/
+__pycache__/
+*.pyc
+
+# Datos Pesados (Evitar subir gigabytes a GitHub)
+Datos/02_Procesados/
+Datos/03_Model_Ready/
+Datos/04_Resultados/
+Datos/05_Deep_Learning/
+Datos/06_Inferencia/
+
+# Extensiones de datos pesados por seguridad
+*.parquet
+*.npy
+*.h5
+*.tif
+*.tiff
+*.kml
+*.kmz
+
+# Variables de entorno (Credenciales de Base de Datos/GEE)
+.env

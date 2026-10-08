@@ -15,6 +15,9 @@ Datos/04_Resultados/
 Datos/05_Deep_Learning/
 Datos/06_Inferencia/
 
+# EXCEPCIÓN CRÍTICA MLOPS: Permitir subir la red neuronal ya entrenada
+!Datos/05_Deep_Learning/*.keras
+
 # Extensiones de datos pesados por seguridad
 *.parquet
 *.npy
@@ -23,6 +26,32 @@ Datos/06_Inferencia/
 *.tiff
 *.kml
 *.kmz
+*.zip
+*.log
 
-# Variables de entorno (Credenciales de Base de Datos/GEE)
+# Variables de entorno
 .env
+
+# Carpetas y archivos crudos / exploratorios que no van a producción
+003_Menonitas/
+004_Modelo/
+03_variables_espaciales/
+Datos/01_Crudos/conagua_txt/
+Datos/01_Crudos/edafologia/
+Datos/01_Crudos/uso de suelo/
+Uso de suelo/
+Datos/03_Modelos/
+Datos/04_Validacion/
+Codigo/Datos/
+
+# Scripts de pruebas locales y archivos basura temporales
+01_actualizar_conagua.py
+aumento_pydaymet.py
+fijar_restriccion_upsert.py
+laboratorio_basico.py
+pipeline_completo_clima.py
+procesar_dem_inegi.py
+visualizar_anomalias.py
+main.py
+arbol.txt
+*tevzbu.geojson

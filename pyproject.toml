@@ -1,0 +1,45 @@
+[project]
+name = "codigo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bs4>=0.0.2",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.2",
+    "pandas>=3.0.5",
+    "psutil>=7.2.2",
+    "psycopg2>=2.9.12",
+    "pyarrow>=25.0.1",
+    "pydaymet>=0.19.4",
+    "python-dotenv>=1.2.2",
+    "rasterio>=1.5.1",
+    "requests>=2.34.2",
+    "scikit-learn>=1.9.0",
+    "shapely>=2.1.2",
+    "sqlalchemy>=2.0.52",
+    "torch>=2.0.0",
+    "torchvision",
+    "torchaudio",
+    "tqdm>=4.70.0",
+    "geopandas>=1.1.4",
+    "fiona>=1.10.1",
+    "earthengine-api>=1.7.42",
+    "geemap>=0.38.4",
+    "pywavelets>=1.10.0",
+    "h3>=4.5.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+torchaudio = { index = "pytorch-cu121" }
+
+[tool.uv.workspace]
+members = ["backend"]

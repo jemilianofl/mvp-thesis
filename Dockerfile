@@ -9,14 +9,15 @@ RUN pip install uv
 
 WORKDIR /app
 
-# Copiamos primero el TOML desde la carpeta backend de tu repo
+# 1. Copiamos ESPECÍFICAMENTE el TOML de la API
 COPY backend/pyproject.toml ./
 RUN uv pip install --system -r pyproject.toml
 
-# Copiamos el main.py desde la carpeta backend de tu repo
+# 2. Copiamos ESPECÍFICAMENTE el main.py de la API
 COPY backend/main.py ./
 
-# Copiamos la carpeta Datos de tu repo
+# 3. Copiamos la carpeta Datos de la raíz
 COPY Datos/ ./Datos/
 
+# 4. Levantamos la API
 CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

@@ -13,7 +13,8 @@ app = FastAPI(title="Motor MLOps - Deforestación Yucatán")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DIR_ACTUAL = Path(__file__).resolve().parent
-DIR_RAIZ = DIR_ACTUAL.parent 
+# Si la carpeta Datos está al lado de main.py (Docker), úsala. Si no, sube un nivel (Local).
+DIR_RAIZ = DIR_ACTUAL if (DIR_ACTUAL / "Datos").exists() else DIR_ACTUAL.parent
 
 RUTA_MALLA = DIR_RAIZ / "Datos" / "01_Crudos" / "malla_regional_yucatan.geojson"
 RUTA_CSV_LSTM = DIR_RAIZ / "Datos" / "06_Inferencia" / "01_Reporte_Riesgo_Regional.csv"

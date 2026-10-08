@@ -52,6 +52,6 @@ laboratorio_basico.py
 pipeline_completo_clima.py
 procesar_dem_inegi.py
 visualizar_anomalias.py
-main.py
+/main.py
 arbol.txt
 *tevzbu.geojson

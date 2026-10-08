@@ -1,26 +1,26 @@
-# Usar una imagen oficial de Python ligera y compatible con tu proyecto
 FROM python:3.12-slim
 
-# Instalar dependencias del sistema recomendadas para GeoPandas y librerías espaciales
 RUN apt-get update && apt-get install -y \
     build-essential \
     libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar el gestor de paquetes ultra rápido 'uv'
 RUN pip install uv
 
-# Establecer el directorio de trabajo dentro del contenedor
+# Establecer directorio base
 WORKDIR /app
 
-# Copiar el archivo de dependencias del backend
-COPY pyproject.toml ./
+# 1. Copiar e instalar dependencias indicando la carpeta backend
+COPY backend/pyproject.toml ./backend/
+RUN cd backend && uv pip install --system -r pyproject.toml
 
-# Usar uv para instalar las dependencias directamente en el sistema del contenedor
-RUN uv pip install --system -r pyproject.toml
+# 2. Copiar el script principal a su carpeta
+COPY backend/main.py ./backend/
 
-# Copiar el script principal de tu API
-COPY main.py ./
+# 3. Copiar la carpeta Datos para que la API tenga información que servir
+COPY Datos/ ./Datos/
 
-# Comando para ejecutar FastAPI usando el puerto dinámico que asigna Render
+# 4. Moverse a la carpeta backend para arrancar el servidor
+WORKDIR /app/backend
+
 CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

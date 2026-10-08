@@ -1,46 +1,42 @@
-import { useRef, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import axios from 'axios';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import axios from 'axios';
 
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
+// FIX: Leer de forma segura desde las variables de entorno de Vercel y forzar el tipado a string
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
-export default function App() {
+// URL de Render (Cámbiala cuando Render te asigne un link público)
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
-  
-  // Estados de la App
-  const [hoverInfo, setHoverInfo] = useState<any | null>(null);
   const [fechas, setFechas] = useState<string[]>([]);
   const [fechaActiva, setFechaActiva] = useState<string>('');
-  
-  // Toggles de Capas
-  const [verRegional, setVerRegional] = useState(true);
-  const [verControl, setVerControl] = useState(true);
+  const [mostrarRegional, setMostrarRegional] = useState(true);
+  const [mostrarFisica, setMostrarFisica] = useState(true);
 
   // 1. Cargar Línea de Tiempo al Iniciar
   useEffect(() => {
-    axios.get('http://localhost:8000/api/fechas').then(res => {
+    axios.get(`${API_BASE_URL}/api/fechas`).then(res => {
       setFechas(res.data.fechas);
-      // FIX: Selecciona automáticamente el PRIMER DÍA del dataset real (2026-06-01)
       if (res.data.fechas.length > 0) {
         setFechaActiva(res.data.fechas[0]);
       }
-    });
+    }).catch(err => console.error("Error cargando fechas:", err));
   }, []);
 
-  // 2. Inicializar Mapbox y crear las Fuentes/Capas vacías
+  // 2. Inicializar Mapa Base
   useEffect(() => {
-    if (map.current || !mapContainer.current) return;
-    
-    mapboxgl.accessToken = MAPBOX_TOKEN;
+    if (map.current) return; // initialize map only once
     map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      container: mapContainer.current!,
+      style: 'mapbox://styles/mapbox/satellite-v9',
       center: [-89.5, 19.5],
-      zoom: 6.8,
+      zoom: 6.5
     });
-    
+
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.current.on('load', () => {
@@ -51,173 +47,135 @@ export default function App() {
         type: 'fill',
         source: 'src-regional',
         paint: {
-          // FIX: Añadimos un verde sutil (#1a9850) para la Selva Sana (0-30%)
           'fill-color': ['step', ['get', 'PROBABILIDAD_COLAPSO'], '#1a9850', 30, '#ffffbf', 50, '#fdae61', 80, '#d73027'],
-          // La selva sana tiene opacidad muy baja (0.15) para no tapar el satélite, las alertas son más sólidas
           'fill-opacity': ['step', ['get', 'PROBABILIDAD_COLAPSO'], 0.15, 30, 0.5, 50, 0.7, 80, 0.85],
-          'fill-outline-color': 'rgba(255,255,255,0.1)' // Bordes finos de los hexágonos
+          'fill-outline-color': 'rgba(255,255,255,0.1)'
         }
       });
 
-      // --- FUENTE 2: GROUND TRUTH (ENSAMBLE) ---
-      map.current!.addSource('src-control', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      // --- FUENTE 2: VALIDACIÓN FÍSICA (GROUND TRUTH) ---
+      map.current!.addSource('src-fisica', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.current!.addLayer({
-        id: 'layer-control',
+        id: 'layer-fisica',
         type: 'fill',
-        source: 'src-control',
+        source: 'src-fisica',
         paint: {
-          'fill-color': [
-            'match', ['get', 'ENSAMBLE_PRED'],
-            -1, '#d73027',    // Degradación Física = Rojo
-             1, '#1a9850',    // Sano = Verde
-            'rgba(85,85,85,0.6)' // -999 o default = Gris Translúcido (Nubes)
-          ],
-          'fill-opacity': 0.85,
-          'fill-outline-color': '#ffffff' // Borde blanco grueso para destacarlos sobre H3
+          'fill-color': ['match', ['get', 'ENSAMBLE_PRED'], 1, '#ff0000', -1, '#00ff00', 'rgba(0,0,0,0)'],
+          'fill-opacity': ['match', ['get', 'ENSAMBLE_PRED'], 1, 0.8, -1, 0.8, 0],
+          'fill-outline-color': '#ffffff'
         }
       });
 
-      // --- LÓGICA DE HOVER INTELIGENTE ---
-      const capasInteractivas = ['layer-regional', 'layer-control'];
-      
-      map.current!.on('mousemove', (e) => {
-        // Consultar qué elementos están debajo del mouse
-        const features = map.current!.queryRenderedFeatures(e.point, { layers: capasInteractivas });
-        
-        if (features.length > 0) {
-          // Si el mouse toca ambas capas, priorizamos la capa de Control (Ground Truth)
-          const featControl = features.find(f => f.layer.id === 'layer-control');
-          const featRender = featControl || features[0];
-          
-          // Ignorar hover en hexágonos sanos (0% riesgo)
-          if (featRender.layer.id === 'layer-regional' && featRender.properties!.PROBABILIDAD_COLAPSO < 30) {
-            map.current!.getCanvas().style.cursor = '';
-            setHoverInfo(null);
-            return;
-          }
+      // INTERACTIVIDAD Y POPUPS (Solución de TypeScript)
+      map.current!.on('click', (e) => {
+        const features = map.current!.queryRenderedFeatures(e.point);
+        if (!features.length) return;
 
-          map.current!.getCanvas().style.cursor = 'crosshair';
-          setHoverInfo({
-            x: e.point.x,
-            y: e.point.y,
-            props: featRender.properties,
-            tipo: featRender.layer.id
-          });
-        } else {
-          map.current!.getCanvas().style.cursor = '';
-          setHoverInfo(null);
+        const featRender = features[0];
+        // FIX: Evadir tipado estricto para extraer la capa y propiedades
+        const layerId = (featRender as any).layer?.id;
+        const props = (featRender as any).properties;
+
+        if (layerId === 'layer-regional') {
+          new mapboxgl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(`<strong>Riesgo Regional</strong><br>Probabilidad: ${props.PROBABILIDAD_COLAPSO}%<br>Nivel: ${props.NIVEL_RIESGO}`)
+            .addTo(map.current!);
+        } else if (layerId === 'layer-fisica') {
+          const estado = props.ENSAMBLE_PRED === 1 ? 'Degradación Detectada' : 'Biomasa Estable';
+          new mapboxgl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(`<strong>Auditoría Física</strong><br>Estado: ${estado}<br>Polígono ID: ${props.ID_POLIGONO}`)
+            .addTo(map.current!);
         }
       });
+
+      map.current!.on('mouseenter', 'layer-regional', () => { map.current!.getCanvas().style.cursor = 'pointer'; });
+      map.current!.on('mouseleave', 'layer-regional', () => { map.current!.getCanvas().style.cursor = ''; });
+      map.current!.on('mouseenter', 'layer-fisica', () => { map.current!.getCanvas().style.cursor = 'pointer'; });
+      map.current!.on('mouseleave', 'layer-fisica', () => { map.current!.getCanvas().style.cursor = ''; });
     });
   }, []);
 
-  // 3. Sincronizar Datos cuando cambian la Fecha o los Toggles
+  // 3. Sincronizar Capas cuando Cambia la Fecha
   useEffect(() => {
     if (!fechaActiva || !map.current || !map.current.isStyleLoaded()) return;
 
-    // Actualizar Capa Regional (H3)
-    if (verRegional) {
-      axios.get(`http://localhost:8000/api/capas/regional?fecha=${fechaActiva}`).then(res => {
-        (map.current!.getSource('src-regional') as mapboxgl.GeoJSONSource).setData(res.data);
-      });
-      map.current.setLayoutProperty('layer-regional', 'visibility', 'visible');
-    } else {
-      map.current.setLayoutProperty('layer-regional', 'visibility', 'none');
-    }
+    // Actualizar Capa Regional
+    axios.get(`${API_BASE_URL}/api/capas/regional?fecha=${fechaActiva}`).then(res => {
+      const source = map.current?.getSource('src-regional') as mapboxgl.GeoJSONSource;
+      if (source) source.setData(res.data);
+    }).catch(err => console.error(err));
 
-    // Actualizar Capa Ground Truth
-    if (verControl) {
-      axios.get(`http://localhost:8000/api/capas/control?fecha=${fechaActiva}`).then(res => {
-        (map.current!.getSource('src-control') as mapboxgl.GeoJSONSource).setData(res.data);
-      });
-      map.current.setLayoutProperty('layer-control', 'visibility', 'visible');
-    } else {
-      map.current.setLayoutProperty('layer-control', 'visibility', 'none');
-    }
-  }, [fechaActiva, verRegional, verControl]);
+    // Actualizar Capa Física
+    axios.get(`${API_BASE_URL}/api/capas/control?fecha=${fechaActiva}`).then(res => {
+      const source = map.current?.getSource('src-fisica') as mapboxgl.GeoJSONSource;
+      if (source) source.setData(res.data);
+    }).catch(err => console.error(err));
+
+  }, [fechaActiva]);
+
+  // 4. Controladores de Visibilidad
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    map.current.setLayoutProperty('layer-regional', 'visibility', mostrarRegional ? 'visible' : 'none');
+    map.current.setLayoutProperty('layer-fisica', 'visibility', mostrarFisica ? 'visible' : 'none');
+  }, [mostrarRegional, mostrarFisica]);
 
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-900 text-slate-100 font-sans">
       
-      {/* Panel de Controles (XAI & Time-Series) */}
-      <div style={{
-        position: 'absolute', top: 20, left: 20, zIndex: 1, 
-        background: 'rgba(15,15,15,0.95)', padding: '20px', borderRadius: '8px', 
-        color: 'white', fontFamily: 'sans-serif', border: '1px solid #333', width: '320px',
-        boxShadow: '0 4px 15px rgba(0,0,0,0.5)'
-      }}>
-        <h2 style={{ margin: '0 0 5px 0', color: '#4CAF50', fontSize: '20px'}}>Dashboard MLOps</h2>
-        <p style={{ fontSize: '13px', color: '#aaa', marginBottom: '20px' }}>Arquitectura Híbrida: LSTM + Ensamble</p>
-        
-        <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Máquina del Tiempo (Historial):</label>
-        <select 
-          value={fechaActiva} 
-          onChange={(e) => setFechaActiva(e.target.value)}
-          style={{ width: '100%', padding: '8px', marginTop: '8px', marginBottom: '20px', background: '#333', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-        >
-          {fechas.map(f => <option key={f} value={f}>{f}</option>)}
-        </select>
+      {/* Panel de Control Lateral */}
+      <div className="w-80 bg-slate-800 p-5 flex flex-col gap-6 shadow-2xl z-10 border-r border-slate-700">
+        <div>
+          <h1 className="text-xl font-bold text-emerald-400">Dashboard MLOps</h1>
+          <p className="text-xs text-slate-400 mt-1">Arquitectura Híbrida: LSTM + Ensamble</p>
+        </div>
 
-        {/* Toggles */}
-        <div style={{ borderTop: '1px solid #444', paddingTop: '15px', marginBottom: '15px', fontSize: '13px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', marginBottom: '10px', fontWeight: verRegional ? 'bold' : 'normal' }}>
-            <input type="checkbox" checked={verRegional} onChange={() => setVerRegional(!verRegional)} style={{ marginRight: '10px' }} />
-            Capa 1: Predicción Regional (H3)
+        {/* Máquina del Tiempo */}
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-semibold text-slate-300">Máquina del Tiempo (Historial):</label>
+          <select 
+            className="bg-slate-700 border border-slate-600 rounded p-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+            value={fechaActiva}
+            onChange={(e) => setFechaActiva(e.target.value)}
+          >
+            {fechas.map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Toggles de Capas */}
+        <div className="flex flex-col gap-3 border-t border-slate-700 pt-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={mostrarRegional} onChange={(e) => setMostrarRegional(e.target.checked)} className="accent-emerald-500 w-4 h-4"/>
+            <span className="text-sm">Capa 1: Predicción Regional (H3)</span>
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: verControl ? 'bold' : 'normal' }}>
-            <input type="checkbox" checked={verControl} onChange={() => setVerControl(!verControl)} style={{ marginRight: '10px' }} />
-            Capa 2: Auditoría Física (Ground Truth)
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={mostrarFisica} onChange={(e) => setMostrarFisica(e.target.checked)} className="accent-emerald-500 w-4 h-4"/>
+            <span className="text-sm">Capa 2: Auditoría Física (Ground Truth)</span>
           </label>
         </div>
 
-        {/* Leyenda Dual */}
-        {verRegional && (
-          <div style={{ fontSize: '12px', lineHeight: '2', background: '#222', padding: '10px', borderRadius: '5px', marginBottom:'10px' }}>
-            <strong style={{color:'#aaa', display:'block', marginBottom:'5px'}}>Probabilidad Colapso (IA):</strong>
-            <div><span style={{display: 'inline-block', width: 12, height: 12, background: '#d73027', marginRight: 8}}></span>Crítico (&gt; 80%)</div>
-            <div><span style={{display: 'inline-block', width: 12, height: 12, background: '#fdae61', marginRight: 8}}></span>Alerta Alta (&gt; 50%)</div>
-          </div>
-        )}
-        
-        {verControl && (
-          <div style={{ fontSize: '12px', lineHeight: '2', background: '#222', padding: '10px', borderRadius: '5px' }}>
-            <strong style={{color:'#aaa', display:'block', marginBottom:'5px'}}>Estado Real (Satélite):</strong>
-            <div><span style={{display: 'inline-block', width: 12, height: 12, background: '#d73027', border: '1px solid white', marginRight: 8}}></span>Degradación Física Detectada</div>
-            <div><span style={{display: 'inline-block', width: 12, height: 12, background: '#1a9850', border: '1px solid white', marginRight: 8}}></span>Biomasa Estable</div>
-            <div><span style={{display: 'inline-block', width: 12, height: 12, background: '#555555', border: '1px solid white', marginRight: 8}}></span>Nublado / Sin Pase de Sensor</div>
-          </div>
-        )}
+        {/* Leyenda Híbrida */}
+        <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 mt-auto">
+          <p className="text-xs font-semibold text-slate-400 mb-3">Probabilidad Colapso (IA):</p>
+          <div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-[#d73027]"></div><span className="text-xs">Crítico (&#62;80%)</span></div>
+          <div className="flex items-center gap-2 mb-4"><div className="w-3 h-3 bg-[#fdae61]"></div><span className="text-xs">Alerta Alta (&#62;50%)</span></div>
+          
+          <p className="text-xs font-semibold text-slate-400 mb-3 border-t border-slate-700 pt-3">Estado Real (Satélite):</p>
+          <div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-[#ff0000]"></div><span className="text-xs">Degradación Física Detectada</span></div>
+          <div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-[#00ff00]"></div><span className="text-xs">Biomasa Estable</span></div>
+          <div className="flex items-center gap-2"><div className="w-3 h-3 bg-transparent border border-white"></div><span className="text-xs">Nublado / Sin Pase de Sensor</span></div>
+        </div>
       </div>
 
-      <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+      {/* Contenedor del Mapa */}
+      <div ref={mapContainer} className="flex-1 relative" />
 
-      {/* Tooltip Dinámico */}
-      {hoverInfo && (
-        <div style={{
-          position: 'absolute', left: hoverInfo.x + 20, top: hoverInfo.y - 20,
-          background: 'rgba(255, 255, 255, 0.95)', color: '#222', padding: '15px', borderRadius: '6px',
-          pointerEvents: 'none', fontFamily: 'sans-serif', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          zIndex: 2, minWidth: '220px'
-        }}>
-          {hoverInfo.tipo === 'layer-regional' ? (
-            <>
-              <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '5px', color: '#8b0000' }}>Hexágono H3: {hoverInfo.props.ID_POLIGONO}</h4>
-              <strong>Predicción LSTM:</strong> {hoverInfo.props.NIVEL_RIESGO}<br/>
-              <strong>Riesgo de Pérdida:</strong> {hoverInfo.props.PROBABILIDAD_COLAPSO}%
-            </>
-          ) : (
-            <>
-              <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '5px', color: '#105b9b' }}>Parcela Maestra #{hoverInfo.props.ID_POLIGONO}</h4>
-              <strong>Estado en Terreno:</strong> <span style={{fontWeight:'bold', color: hoverInfo.props.ENSAMBLE_PRED === -1 ? '#d73027' : '#1a9850'}}>{hoverInfo.props.ENSAMBLE_PRED === -1 ? 'Degradación' : hoverInfo.props.ENSAMBLE_PRED === 1 ? 'Sano' : 'Nubes (Sin Datos)'}</span><br/>
-              <hr style={{ border: '0.5px solid #eee', margin: '8px 0' }}/>
-              <span style={{fontSize:'11px', color:'#666'}}>Lecturas de Teledetección ({fechaActiva}):</span><br/>
-              <strong>Vigor (NDVI):</strong> {hoverInfo.props.NDVI}<br/>
-              <strong>Dosel (Radar VV):</strong> {hoverInfo.props.RADAR_VV}<br/>
-              <strong>Estrés Hídrico:</strong> {hoverInfo.props.ESTRES_HIDRICO}
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }
+
+export default App;

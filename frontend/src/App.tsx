@@ -7,9 +7,6 @@ import axios from 'axios';
 // Leer de forma segura desde las variables de entorno de Vercel
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
-// Desactivar la telemetría para evitar bloqueos por Ad-Blockers
-mapboxgl.workerClass = require('worker-loader!mapbox-gl/dist/mapbox-gl-csp-worker').default;
-
 // URL de Render (Cámbiala cuando Render te asigne un link público)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 

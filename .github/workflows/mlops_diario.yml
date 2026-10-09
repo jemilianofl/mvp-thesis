@@ -15,24 +15,23 @@ jobs:
       - name: Configurar Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12' # Asegura la misma versión que usas localmente
+          python-version: '3.12'
           
-      - name: Instalar Dependencias
+      - name: Instalar dependencias con uv
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install uv
+          uv pip install --system -r pyproject.toml
           
       - name: Ejecutar Pipeline Cloud
         env:
-          # Si tu script de GEE necesita credenciales, se inyectan así desde los Secrets de GitHub
           EARTHENGINE_TOKEN: ${{ secrets.EARTHENGINE_TOKEN }} 
-        run: python Codigo/orquestador_cloud.py
+        run: uv run Codigo/orquestador_cloud.py
         
       - name: Hacer Commit de las nuevas predicciones
         run: |
           git config --global user.name 'MLOps-Bot'
           git config --global user.email 'bot@tesis-mlops.com'
-          # Añadimos solo el CSV final de riesgo que servirá la API
           git add Datos/06_Inferencia/01_Reporte_Riesgo_Regional.csv 
           git commit -m "🤖 Actualización diaria de riesgo forestal LSTM" || echo "Sin cambios hoy"
           git push

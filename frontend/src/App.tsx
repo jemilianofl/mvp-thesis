@@ -4,6 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import axios from 'axios';
 import Sidebar from './components/Sidebar';
 import AnalyticsPanel from './components/AnalyticsPanel';
+import type { Feature } from 'geojson';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string;
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -17,7 +18,7 @@ export default function App() {
   const [mostrarRegional, setMostrarRegional] = useState(true);
   const [mostrarFisica, setMostrarFisica] = useState(true);
   
-  const [selectedFeature, setSelectedFeature] = useState<GeoJSON.Feature | null>(null);
+  const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
 
   useEffect(() => {
     axios.get(`${API_BASE_URL}/api/fechas`).then(res => {
@@ -73,7 +74,7 @@ export default function App() {
 
       map.current!.on('click', (e) => {
         const features = map.current!.queryRenderedFeatures(e.point, { layers: ['layer-regional', 'layer-fisica'] });
-        if (features.length) setSelectedFeature(features[0] as GeoJSON.Feature);
+        if (features.length) setSelectedFeature((features[0] as unknown) as Feature);
         else setSelectedFeature(null);
       });
 

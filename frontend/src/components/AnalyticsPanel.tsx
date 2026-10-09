@@ -1,21 +1,21 @@
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import type { Feature } from 'geojson';
 
 interface AnalyticsPanelProps {
-  readonly feature: GeoJSON.Feature | null;
+  readonly feature: Feature | null;
 }
 
 export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
-  // FIX: Optional chaining (S6582) y verificación de existencia
   if (!feature?.properties) return null;
 
-  // FIX: Forzamos el tipado a un diccionario de datos para evitar el error 2339
-  const props: Record<string, any> = feature.properties;
+  // FIX: Reemplazamos 'any' por tipos primitivos estrictos
+  const props = feature.properties as Record<string, string | number>;
   
   const rawData = [
-    { name: 'NDVI', value: props.NDVI || 0 },
-    { name: 'RADAR VV', value: props.RADAR_VV || 0 },
-    { name: 'RADAR VH', value: props.RADAR_VH || 0 },
-    { name: 'Estrés Hídrico', value: props.ESTRES_HIDRICO || 0 }
+    { name: 'NDVI', value: Number(props.NDVI) || 0 },
+    { name: 'RADAR VV', value: Number(props.RADAR_VV) || 0 },
+    { name: 'RADAR VH', value: Number(props.RADAR_VH) || 0 },
+    { name: 'Estrés Hídrico', value: Number(props.ESTRES_HIDRICO) || 0 }
   ];
 
   const data = rawData

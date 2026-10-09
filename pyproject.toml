@@ -29,6 +29,7 @@ dependencies = [
     "geemap>=0.38.4",
     "pywavelets>=1.10.0",
     "h3>=4.5.0",
+    "seaborn>=0.13.2",
 ]
 
 [[tool.uv.index]]

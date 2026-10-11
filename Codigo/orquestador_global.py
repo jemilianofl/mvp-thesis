@@ -104,4 +104,5 @@ class PipelineMLOps:
             logging.critical(f"🛑 PIPELINE ABORTADO: {str(e)}")
 
 if __name__ == "__main__":
-    PipelineMLOps(modo_reentrenamiento=False).ejecutar_pipeline()
+    # Cambiar a True para forzar el flujo completo y reentrenamiento
+    PipelineMLOps(modo_reentrenamiento=True).ejecutar_pipeline()

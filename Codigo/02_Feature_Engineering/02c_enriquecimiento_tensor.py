@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import warnings
+import gc  
 
 warnings.filterwarnings("ignore")
 
@@ -43,35 +44,52 @@ class TensorEnrichmentPipeline:
         
         exitos = 0
         for archivo in tqdm(archivos, desc="Calculando Espacio de Frecuencias"):
-            nombre_archivo = os.path.basename(archivo).replace("tensor_maestro_", "tensor_enriquecido_")
-            df = pd.read_parquet(archivo)
-            if df.empty: continue
-            
-            df['FECHA_MES'] = pd.to_datetime(df['FECHA_MES'])
-            df = df.sort_values('FECHA_MES').reset_index(drop=True)
-            
-            # SOLUCIÓN: Interpolar solo las columnas numéricas
-            cols_num = df.select_dtypes(include=[np.number]).columns
-            df[cols_num] = df[cols_num].interpolate(method='linear').bfill().ffill()
-            
-            # 1. Transformada Wavelet en Múltiples Dimensiones
-            df['NDVI_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df['NDVI'].values)
-            df['PRECIP_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df['PRECIP_SUM_MES'].values)
-            
-            if 'BSI' in df.columns:
-                df['BSI_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df['BSI'].values)
-            
-            # 2. Rezagos (Lags Temporales Clásicos)
-            df['NDVI_LAG_1'] = df['NDVI'].shift(1)
-            df['NDVI_LAG_3'] = df['NDVI'].shift(3)
-            
-            # 3. Ventanas Móviles Climáticas
-            df['PRECIP_ACUM_3M'] = df['PRECIP_SUM_MES'].rolling(window=3, min_periods=1).sum()
-            df['ESTRES_HIDRICO'] = df['TMAX_MEDIAN'] / (df['PRECIP_SUM_MES'] + 1)
-            
-            df = df.dropna().reset_index(drop=True)
-            df.to_parquet(os.path.join(self.dir_salida, nombre_archivo), index=False)
-            exitos += 1
+            try:
+                nombre_archivo = os.path.basename(archivo).replace("tensor_maestro_", "tensor_enriquecido_")
+                df = pd.read_parquet(archivo)
+                if df.empty: continue
+                
+                # Detectar si es el dataset mensual histórico o el diario de vigilancia
+                col_fecha = 'FECHA_MES' if 'FECHA_MES' in df.columns else 'FECHA'
+                col_precip = 'PRECIP_SUM_MES' if 'PRECIP_SUM_MES' in df.columns else 'PRECIP'
+                col_tmax = 'TMAX_MEDIAN' if 'TMAX_MEDIAN' in df.columns else 'TMAX'
+                
+                df[col_fecha] = pd.to_datetime(df[col_fecha])
+                df = df.sort_values(col_fecha).reset_index(drop=True)
+                
+                cols_num = df.select_dtypes(include=[np.number]).columns
+                if len(cols_num) > 0:
+                    df[cols_num] = df[cols_num].interpolate(method='linear').bfill().ffill()
+                
+                # 1. Transformada Wavelet y Rezagos (Con validación de existencia)
+                if 'NDVI' in df.columns:
+                    df['NDVI_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df['NDVI'].values)
+                    df['NDVI_LAG_1'] = df['NDVI'].shift(1)
+                    df['NDVI_LAG_3'] = df['NDVI'].shift(3)
+                
+                if col_precip in df.columns:
+                    df['PRECIP_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df[col_precip].values)
+                    df['PRECIP_ACUM_3M'] = df[col_precip].rolling(window=3, min_periods=1).sum()
+                
+                if 'BSI' in df.columns:
+                    df['BSI_WAVELET_DETALLE'] = self._extraer_detalle_wavelet(df['BSI'].values)
+                
+                # 2. Ventanas Móviles Climáticas dinámicas
+                if col_tmax in df.columns and col_precip in df.columns:
+                    df['ESTRES_HIDRICO'] = df[col_tmax] / (df[col_precip] + 1)
+                
+                df = df.dropna().reset_index(drop=True)
+                df.to_parquet(os.path.join(self.dir_salida, nombre_archivo), index=False)
+                exitos += 1
+                
+            except Exception as e:
+                print(f"\n   ⚠️ Error procesando {os.path.basename(archivo)}: {e}")
+                
+            finally:
+                # FIX MLOPS: Forzar liberación de RAM en cada iteración para evitar colapso silencioso
+                try: del df
+                except NameError: pass
+                gc.collect()
             
         print(f"   ✅ {exitos} Tensores enriquecidos con energía Wavelet listos.")
         return True
@@ -83,6 +101,13 @@ class TensorEnrichmentPipeline:
         
         df = pd.read_parquet(archivos[0])
         
+        col_fecha = 'FECHA_MES' if 'FECHA_MES' in df.columns else 'FECHA'
+        
+        # Validar que existan las columnas necesarias para la gráfica
+        if 'NDVI' not in df.columns or 'PRECIP_ACUM_3M' not in df.columns or 'NDVI_WAVELET_DETALLE' not in df.columns:
+            print("   ⚠️ Faltan columnas físicas en la muestra. Se omite la generación de gráficas.")
+            return
+
         plt.rcParams.update(plt.rcParamsDefault)
         plt.style.use('default')
         sns.set_theme(style="whitegrid")
@@ -95,14 +120,14 @@ class TensorEnrichmentPipeline:
         color_ndvi = '#2ca02c' 
         ax1.set_xlabel('Mes de Observación', fontsize=12, color='black')
         ax1.set_ylabel('Índice de Salud Forestal (NDVI)', color=color_ndvi, fontsize=12, fontweight='bold')
-        ax1.plot(df['FECHA_MES'], df['NDVI'], color=color_ndvi, linewidth=2.5, label='NDVI Mensual')
+        ax1.plot(df[col_fecha], df['NDVI'], color=color_ndvi, linewidth=2.5, label='NDVI Mensual')
         ax1.tick_params(axis='y', labelcolor=color_ndvi)
         ax1.tick_params(axis='x', colors='black')
         
         ax2 = ax1.twinx()  
         color_precip = '#1f77b4' 
         ax2.set_ylabel('Lluvia Acumulada a 3 Meses (mm)', color=color_precip, fontsize=12, fontweight='bold')
-        ax2.fill_between(df['FECHA_MES'], 0, df['PRECIP_ACUM_3M'], color=color_precip, alpha=0.25)
+        ax2.fill_between(df[col_fecha], 0, df['PRECIP_ACUM_3M'], color=color_precip, alpha=0.25)
         ax2.tick_params(axis='y', labelcolor=color_precip)
         
         plt.title('Dinámica Eco-Climática Temporal\nRelación entre Precipitación Acumulada y Salud de la Selva', fontsize=14, fontweight='bold', pad=15, color='black')
@@ -125,13 +150,13 @@ class TensorEnrichmentPipeline:
         
         ax3.set_xlabel('Mes de Observación', fontsize=12, color='black')
         ax3.set_ylabel('Señal Original (NDVI)', color=color_ndvi, fontsize=12, fontweight='bold')
-        ax3.plot(df['FECHA_MES'], df['NDVI'], color=color_ndvi, linewidth=2, label='NDVI Bruto')
+        ax3.plot(df[col_fecha], df['NDVI'], color=color_ndvi, linewidth=2, label='NDVI Bruto')
         ax3.tick_params(axis='y', labelcolor=color_ndvi)
         
         ax4 = ax3.twinx()  
         color_wave = '#d62728' 
         ax4.set_ylabel('Coeficiente de Detalle Wavelet (Anomalía)', color=color_wave, fontsize=12, fontweight='bold')
-        ax4.plot(df['FECHA_MES'], df['NDVI_WAVELET_DETALLE'], color=color_wave, linewidth=1.5, linestyle='--', label='Alta Frecuencia (Wavelet)')
+        ax4.plot(df[col_fecha], df['NDVI_WAVELET_DETALLE'], color=color_wave, linewidth=1.5, linestyle='--', label='Alta Frecuencia (Wavelet)')
         ax4.tick_params(axis='y', labelcolor=color_wave)
         
         ax4.axhline(0, color='black', linewidth=1, alpha=0.5)

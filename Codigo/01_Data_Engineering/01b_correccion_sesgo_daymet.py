@@ -1,16 +1,20 @@
+import gc
 import os
-import pandas as pd
-import numpy as np
-import pydaymet as daymet
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-from datetime import datetime
 import warnings
+from datetime import datetime, timezone
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pydaymet as daymet
+import seaborn as sns
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 # Ignorar advertencias de librerías para mantener limpia la consola
 warnings.filterwarnings("ignore")
+
+ESTADO_CRITICO = "Crítica/Suspendida"
 
 class DaymetBiasCorrectionPipeline:
     """
@@ -25,9 +29,9 @@ class DaymetBiasCorrectionPipeline:
         self.db_uri = os.getenv("DB_CONNECTION_STRING", "postgresql://postgres:123@localhost:5432/climate_data")
         self.engine = create_engine(self.db_uri, pool_pre_ping=True)
         
-        # Parámetros Temporales
+        # Parámetros Temporales (UTC estricto)
         self.fecha_base_historica = "2000-01-01"
-        self.hoy = datetime.now().strftime('%Y-%m-%d')
+        self.hoy = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
         # Estructura de Directorios
         self.dir_base = os.path.dirname(os.path.abspath(__file__))
@@ -75,7 +79,7 @@ class DaymetBiasCorrectionPipeline:
             df_hist = pd.read_sql(query, conn, params={"est": estacion_id})
             
         if df_hist.empty or len(df_hist) < 365:
-            return None, "Crítica/Suspendida"
+            return None, ESTADO_CRITICO
             
         df_hist['FECHA'] = pd.to_datetime(df_hist['FECHA'])
         df_hist['MES'] = df_hist['FECHA'].dt.month
@@ -84,8 +88,14 @@ class DaymetBiasCorrectionPipeline:
         dias_validos = df_hist['PRECIP'].notna().sum()
         completitud = (dias_validos / dias_totales) * 100 if dias_totales > 0 else 0
         
-        categoria = "Referencia" if completitud > 70.0 else "Útil" if completitud >= 20.0 else "Crítica/Suspendida"
-        if categoria == "Crítica/Suspendida":
+        if completitud > 70.0:
+            categoria = "Referencia"
+        elif completitud >= 20.0:
+            categoria = "Útil"
+        else:
+            categoria = ESTADO_CRITICO
+            
+        if categoria == ESTADO_CRITICO:
             return None, categoria
 
         # Promedios para la corrección de Daymet
@@ -95,6 +105,30 @@ class DaymetBiasCorrectionPipeline:
             'PRECIP_MEAN': df_hist.groupby('MES')['PRECIP'].mean()
         }
         return sesgos, categoria
+
+    def _aplicar_correccion_daymet(self, df_fusion, coords, sesgos_hist):
+        """Aplica la corrección de sesgo a los datos satelitales usando la historia física."""
+        try:
+            daymet_hist = daymet.get_bycoords(coords, dates=(self.fecha_base_historica, "2020-12-31"), variables=["tmax", "tmin", "prcp"]).reset_index()
+            daymet_hist = self._limpiar_columnas_daymet(daymet_hist)
+            daymet_hist['MES'] = daymet_hist['FECHA'].dt.month
+            
+            b_tmax = sesgos_hist['TMAX_MEAN'] - daymet_hist.groupby('MES')['tmax'].mean()
+            b_tmin = sesgos_hist['TMIN_MEAN'] - daymet_hist.groupby('MES')['tmin'].mean()
+            b_prcp = (sesgos_hist['PRECIP_MEAN'] / daymet_hist.groupby('MES')['prcp'].mean().replace(0, 0.01)).clip(upper=5.0)
+
+            # Uso explícito de variables internas en lambdas
+            df_fusion['TMAX_AUM'] = df_fusion['TMAX'].fillna(df_fusion.apply(lambda r, b=b_tmax: r['tmax'] + b.get(r['MES'], 0), axis=1))
+            df_fusion['TMIN_AUM'] = df_fusion['TMIN'].fillna(df_fusion.apply(lambda r, b=b_tmin: r['tmin'] + b.get(r['MES'], 0), axis=1))
+            df_fusion['PRECIP_AUM'] = df_fusion['PRECIP'].fillna(df_fusion.apply(lambda r, b=b_prcp: r['prcp'] * b.get(r['MES'], 1), axis=1))
+            df_fusion['ORIGEN'] = np.where(df_fusion['TMAX'].notna(), 'CONAGUA', 'DAYMET_CORREGIDO')
+        except Exception as e:
+            print(f"   ⚠️ No se pudo corregir Daymet: {e}")
+            df_fusion['TMAX_AUM'] = df_fusion['TMAX']
+            df_fusion['TMIN_AUM'] = df_fusion['TMIN']
+            df_fusion['PRECIP_AUM'] = df_fusion['PRECIP']
+            df_fusion['ORIGEN'] = 'CONAGUA_DIRECTO'
+        return df_fusion
 
     def procesar_aumento_incremental(self):
         """Orquesta la descarga satelital, calcula el sesgo espacial y fusiona los datos."""
@@ -120,7 +154,8 @@ class DaymetBiasCorrectionPipeline:
             try:
                 df_daymet = daymet.get_bycoords(coords, dates=(fecha_inicio, self.hoy), variables=["tmax", "tmin", "prcp"]).reset_index()
                 df_daymet = self._limpiar_columnas_daymet(df_daymet)
-            except Exception:
+            except Exception as e:
+                print(f"   ⚠️ Fallo API Daymet: {e}")
                 df_daymet = pd.DataFrame(columns=['FECHA', 'tmax', 'tmin', 'prcp'])
                 df_daymet['FECHA'] = pd.to_datetime(df_daymet['FECHA']) 
 
@@ -131,36 +166,18 @@ class DaymetBiasCorrectionPipeline:
                 df_conagua['FECHA'] = pd.to_datetime(df_conagua['FECHA'])
 
             # 3. Fusión Híbrida Segura
-            df_fusion = pd.merge(df_daymet, df_conagua, on="FECHA", how="outer")
+            df_fusion = pd.merge(df_daymet, df_conagua, on="FECHA", how="outer", validate="one_to_one")
             df_fusion['MES'] = df_fusion['FECHA'].dt.month
             
             sesgos_hist, categoria = self._calcular_sesgo_historico(est_id)
             
-            if categoria == "Crítica/Suspendida" or not sesgos_hist:
+            if categoria == ESTADO_CRITICO or not sesgos_hist:
                 df_fusion['TMAX_AUM'] = df_fusion['TMAX'].fillna(df_fusion['tmax'])
                 df_fusion['TMIN_AUM'] = df_fusion['TMIN'].fillna(df_fusion['tmin'])
                 df_fusion['PRECIP_AUM'] = df_fusion['PRECIP'].fillna(df_fusion['prcp'])
                 df_fusion['ORIGEN'] = np.where(df_fusion['TMAX'].notna(), 'CONAGUA_DIRECTO', 'DAYMET_PURO')
             else:
-                try:
-                    # Corrección Satelital (Temperaturas y Lluvia)
-                    daymet_hist = daymet.get_bycoords(coords, dates=(self.fecha_base_historica, "2020-12-31"), variables=["tmax", "tmin", "prcp"]).reset_index()
-                    daymet_hist = self._limpiar_columnas_daymet(daymet_hist)
-                    daymet_hist['MES'] = daymet_hist['FECHA'].dt.month
-                    
-                    b_tmax = sesgos_hist['TMAX_MEAN'] - daymet_hist.groupby('MES')['tmax'].mean()
-                    b_tmin = sesgos_hist['TMIN_MEAN'] - daymet_hist.groupby('MES')['tmin'].mean()
-                    b_prcp = (sesgos_hist['PRECIP_MEAN'] / daymet_hist.groupby('MES')['prcp'].mean().replace(0, 0.01)).clip(upper=5.0)
-
-                    df_fusion['TMAX_AUM'] = df_fusion['TMAX'].fillna(df_fusion.apply(lambda r: r['tmax'] + b_tmax.get(r['MES'], 0), axis=1))
-                    df_fusion['TMIN_AUM'] = df_fusion['TMIN'].fillna(df_fusion.apply(lambda r: r['tmin'] + b_tmin.get(r['MES'], 0), axis=1))
-                    df_fusion['PRECIP_AUM'] = df_fusion['PRECIP'].fillna(df_fusion.apply(lambda r: r['prcp'] * b_prcp.get(r['MES'], 1), axis=1))
-                    df_fusion['ORIGEN'] = np.where(df_fusion['TMAX'].notna(), 'CONAGUA', 'DAYMET_CORREGIDO')
-                except Exception:
-                    df_fusion['TMAX_AUM'] = df_fusion['TMAX']
-                    df_fusion['TMIN_AUM'] = df_fusion['TMIN']
-                    df_fusion['PRECIP_AUM'] = df_fusion['PRECIP']
-                    df_fusion['ORIGEN'] = 'CONAGUA_DIRECTO'
+                df_fusion = self._aplicar_correccion_daymet(df_fusion, coords, sesgos_hist)
 
             # 4. Limpieza final y UPSERT
             df_bd = df_fusion.dropna(subset=['TMAX_AUM', 'TMIN_AUM', 'PRECIP_AUM'], how='all')
@@ -168,43 +185,55 @@ class DaymetBiasCorrectionPipeline:
             df_bd = df_bd[columnas_finales].dropna(subset=['FECHA']).copy()
             df_bd['ESTACION'] = est_id
             
-            if df_bd.empty: continue
-            
-            try:
-                with self.engine.begin() as conn:
-                    conn.execute(text("CREATE TEMP TABLE temp_aum (LIKE lecturas_aumentadas INCLUDING ALL) ON COMMIT DROP;"))
-                    df_bd.to_sql("temp_aum", conn, if_exists='append', index=False)
-                    conn.execute(text("""
-                        INSERT INTO lecturas_aumentadas ("ESTACION", "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM", "ORIGEN")
-                        SELECT "ESTACION", "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM", "ORIGEN" FROM temp_aum
-                        ON CONFLICT ("ESTACION", "FECHA") DO UPDATE SET
-                            "TMAX_AUM" = EXCLUDED."TMAX_AUM", "TMIN_AUM" = EXCLUDED."TMIN_AUM",
-                            "PRECIP_AUM" = EXCLUDED."PRECIP_AUM", "ORIGEN" = EXCLUDED."ORIGEN";
-                    """))
-                print(f"   ✔️ {len(df_bd)} días de clima híbrido sincronizados.")
-            except Exception as e:
-                print(f"   ❌ Error SQL: {e}")
+            if not df_bd.empty:
+                try:
+                    with self.engine.begin() as conn:
+                        conn.execute(text("CREATE TEMP TABLE temp_aum (LIKE lecturas_aumentadas INCLUDING ALL) ON COMMIT DROP;"))
+                        df_bd.to_sql("temp_aum", conn, if_exists='append', index=False)
+                        conn.execute(text("""
+                            INSERT INTO lecturas_aumentadas ("ESTACION", "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM", "ORIGEN")
+                            SELECT "ESTACION", "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM", "ORIGEN" FROM temp_aum
+                            ON CONFLICT ("ESTACION", "FECHA") DO UPDATE SET
+                                "TMAX_AUM" = EXCLUDED."TMAX_AUM", "TMIN_AUM" = EXCLUDED."TMIN_AUM",
+                                "PRECIP_AUM" = EXCLUDED."PRECIP_AUM", "ORIGEN" = EXCLUDED."ORIGEN";
+                        """))
+                    print(f"   ✔️ {len(df_bd)} días de clima híbrido sincronizados.")
+                except Exception as e:
+                    print(f"   ❌ Error SQL: {e}")
+
+            # Forzar liberación de memoria RAM local
+            try: del df_daymet, df_conagua, df_fusion, df_bd
+            except NameError: pass
+            gc.collect()
 
     def generar_reporte_metodologico(self):
         print("\n📊 [ETAPA 2] Generando Gráficas Académicas de Validación...")
-        query = text('SELECT "FECHA", "TMAX_AUM", "TMIN_AUM", "ORIGEN" FROM lecturas_aumentadas WHERE "FECHA" >= \'2000-01-01\' ORDER BY RANDOM() LIMIT 50000;')
+        
+        query = text("""
+            SELECT "FECHA", "TMAX_AUM", "TMIN_AUM", "ORIGEN" 
+            FROM lecturas_aumentadas 
+            WHERE random() < 0.1 
+            LIMIT 50000;
+        """)
+        
         with self.engine.connect() as conn:
             df = pd.read_sql(query, conn)
             
         if df.empty: return
+            
         plt.style.use('default')
         sns.set_theme(style="whitegrid")
         
         plt.figure(figsize=(9, 6))
         conteo = df['ORIGEN'].value_counts()
         colores = ['#41ab5d' if 'CONAGUA' in orig else '#ef3b2c' if 'PURO' in orig else '#fd8d3c' for orig in conteo.index]
-        wedges, texts, autotexts = plt.pie(conteo, labels=conteo.index, autopct='%1.1f%%', startangle=140, colors=colores, wedgeprops=dict(width=0.4, edgecolor='w'))
+        _, _, autotexts = plt.pie(conteo, labels=conteo.index, autopct='%1.1f%%', startangle=140, colors=colores, wedgeprops={"width": 0.4, "edgecolor": "w"})
         plt.setp(autotexts, size=11, weight="bold", color="black")
         plt.title('Recuperación de Vacíos Históricos\n(Estación Física vs Satélite)', fontsize=14, fontweight='bold')
         plt.savefig(os.path.join(self.reports_folder, "03_Composicion_Origen_Datos.png"), dpi=300, bbox_inches='tight')
         plt.close()
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
         paleta = {'CONAGUA': '#41ab5d', 'DAYMET_CORREGIDO': '#fd8d3c', 'DAYMET_PURO': '#ef3b2c', 'CONAGUA_DIRECTO': '#41ab5d'}
         sns.kdeplot(data=df, x="TMAX_AUM", hue="ORIGEN", fill=True, common_norm=False, palette=paleta, alpha=0.4, linewidth=1.5, ax=ax1)
         ax1.set_title('Corrección de Sesgo (Temp. Máxima)', fontweight='bold')

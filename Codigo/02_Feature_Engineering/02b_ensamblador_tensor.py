@@ -17,17 +17,15 @@ warnings.filterwarnings("ignore")
 class MasterTensorBuilderPipeline:
     """
     Pipeline MLOps para ensamblar el Tensor Maestro.
-    Cruza las series temporales de Google Earth Engine (Mensuales) 
-    con las agregaciones climáticas terrestres de la estación más cercana.
+    Cruza las series temporales de Google Earth Engine con 
+    las agregaciones climáticas terrestres de la estación más cercana.
     """
     
     def __init__(self):
-        # Base de Datos
         load_dotenv()
         self.db_uri = os.getenv("DB_CONNECTION_STRING", "postgresql://postgres:123@localhost:5432/climate_data")
         self.engine = create_engine(self.db_uri, pool_pre_ping=True)
         
-        # Rutas de Archivos
         self.dir_base = os.path.dirname(os.path.abspath(__file__))
         self.ruta_poligonos = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "poligonos_maestros.geojson"))
         self.dir_gee = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "02_Procesados", "gee_parquet"))
@@ -37,24 +35,18 @@ class MasterTensorBuilderPipeline:
         os.makedirs(self.dir_salida, exist_ok=True)
         os.makedirs(self.reports_folder, exist_ok=True)
 
-    def _obtener_clima_mensual_estacion(self, estacion_id):
-        """Agrega los datos diarios de una estación a promedios/sumas mensuales."""
-        query = text("""
-            SELECT "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM" 
-            FROM lecturas_aumentadas 
-            WHERE "ESTACION" = :est
-        """)
-        
+    def _obtener_clima_todas_estaciones(self):
+        """Descarga y agrega el clima de todas las estaciones de un solo golpe (Cero saturación de BD)."""
+        query = text('SELECT "ESTACION", "FECHA", "TMAX_AUM", "TMIN_AUM", "PRECIP_AUM" FROM lecturas_aumentadas')
         with self.engine.connect() as conn:
-            df_clima = pd.read_sql(query, conn, params={"est": estacion_id})
+            df_clima = pd.read_sql(query, conn)
             
         if df_clima.empty:
-            return pd.DataFrame()
+            return {}
             
         df_clima['FECHA_MES'] = pd.to_datetime(df_clima['FECHA']).dt.strftime('%Y-%m')
         
-        # Agregación climática: Promedio de TMAX/TMIN, Suma Acumulada de Lluvia
-        clima_mensual = df_clima.groupby('FECHA_MES').agg({
+        clima_mensual = df_clima.groupby(['ESTACION', 'FECHA_MES']).agg({
             'TMAX_AUM': 'mean',
             'TMIN_AUM': 'mean',
             'PRECIP_AUM': 'sum'
@@ -66,10 +58,10 @@ class MasterTensorBuilderPipeline:
             'PRECIP_AUM': 'PRECIP_SUM_MES'
         }, inplace=True)
         
-        return clima_mensual
+        # Generar diccionario en RAM para acceso instantáneo
+        return {est: df_grupo.drop(columns=['ESTACION']) for est, df_grupo in clima_mensual.groupby('ESTACION')}
 
     def ensamblar_tensores(self):
-        """Encuentra la estación más cercana a cada polígono y cruza GEE con Clima."""
         print("\n⚙️ [ETAPA 1] Ensamblando Tensores Maestros (Satélite + Clima)...")
         
         if not os.path.exists(self.ruta_poligonos):
@@ -85,10 +77,12 @@ class MasterTensorBuilderPipeline:
             print("❌ No hay estaciones en la base de datos.")
             return False
             
-        # Asignación espacial ultra rápida
         arbol_estaciones = cKDTree(df_est[['LONGITUD', 'LATITUD']].values)
         archivos_gee = glob.glob(os.path.join(self.dir_gee, "gee_poligono_*.parquet"))
         print(f"   ► Procesando {len(archivos_gee)} series temporales de satélite...")
+        
+        # Cargar clima a la RAM
+        diccionario_clima = self._obtener_clima_todas_estaciones()
         
         exitos = 0
         for archivo in tqdm(archivos_gee, desc="Fusionando Datos"):
@@ -97,7 +91,11 @@ class MasterTensorBuilderPipeline:
             df_satelite = pd.read_parquet(archivo)
             if df_satelite.empty: continue
             
-            # Centroide del polígono para buscar la estación más cercana
+            # Autocompletar FECHA_MES si el tensor original venía en formato diario
+            if 'FECHA_MES' not in df_satelite.columns:
+                col_fecha = 'FECHA' if 'FECHA' in df_satelite.columns else df_satelite.columns[0]
+                df_satelite['FECHA_MES'] = pd.to_datetime(df_satelite[col_fecha]).dt.strftime('%Y-%m')
+            
             try:
                 if pol_id.isdigit() and int(pol_id) < len(gdf_poligonos):
                     poligono_geom = gdf_poligonos.iloc[int(pol_id)]
@@ -110,11 +108,11 @@ class MasterTensorBuilderPipeline:
             _, idx_estacion = arbol_estaciones.query([[centroide.x, centroide.y]], k=1)
             estacion_asignada = df_est.iloc[idx_estacion[0]]['ESTACION']
             
-            df_clima_mensual = self._obtener_clima_mensual_estacion(estacion_asignada)
+            df_clima_mensual = diccionario_clima.get(estacion_asignada, pd.DataFrame())
             if df_clima_mensual.empty: continue
                 
-            # Cruce exacto en la línea de tiempo (Merge temporal)
-            df_tensor = pd.merge(df_satelite, df_clima_mensual, on='FECHA_MES', how='inner', validate='one_to_one')
+            # Cruce dinámico sin restricción 'one_to_one'
+            df_tensor = pd.merge(df_satelite, df_clima_mensual, on='FECHA_MES', how='inner')
             df_tensor['ESTACION_REF'] = estacion_asignada
             
             ruta_out = os.path.join(self.dir_salida, f"tensor_maestro_{pol_id}.parquet")
@@ -125,7 +123,6 @@ class MasterTensorBuilderPipeline:
         return True
 
     def generar_reporte_metodologico(self):
-        """Genera una Matriz de Correlación para la Tesis (Estilo APA/Académico)."""
         print("\n📊 [ETAPA 2] Generando Gráfica de Matriz de Correlación...")
         
         archivos_tensor = glob.glob(os.path.join(self.dir_salida, "tensor_maestro_*.parquet"))
@@ -134,9 +131,7 @@ class MasterTensorBuilderPipeline:
         df_list = [pd.read_parquet(f) for f in archivos_tensor[:50]]
         df_master = pd.concat(df_list, ignore_index=True)
         
-        # Filtrar variables críticas
         variables_analisis = ['NDVI', 'BSI', 'GCI', 'RADAR_VH', 'RADAR_VV', 'TMAX_MEDIAN', 'PRECIP_SUM_MES']
-        # Validar qué columnas existen realmente antes de filtrar
         columnas_presentes = [col for col in variables_analisis if col in df_master.columns]
         df_analisis = df_master[columnas_presentes].dropna()
         
@@ -144,12 +139,11 @@ class MasterTensorBuilderPipeline:
         
         matriz_corr = df_analisis.corr()
         
-        # ESTILO ESTRICTAMENTE ACADÉMICO (Fondo blanco)
         plt.style.use('default')
         sns.set_theme(style="white") 
         
         fig, ax = plt.subplots(figsize=(10, 8))
-        cmap = sns.color_palette("vlag", as_cmap=True) # Paleta azul-rojo formal
+        cmap = sns.color_palette("vlag", as_cmap=True)
         
         sns.heatmap(matriz_corr, annot=True, fmt=".2f", cmap=cmap, vmin=-1, vmax=1, 
                     square=True, linewidths=.5, cbar_kws={"shrink": .8}, ax=ax, 

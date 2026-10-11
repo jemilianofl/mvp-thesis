@@ -30,6 +30,9 @@ dependencies = [
     "pywavelets>=1.10.0",
     "h3>=4.5.0",
     "seaborn>=0.13.2",
+    "sqlalchemy",
+    "psycopg[binary]",
+    "pandas"
 ]
 
 [[tool.uv.index]]

@@ -84,7 +84,7 @@ class ConaguaPipeline:
             "http": "http://103.88.234.239:40005",
             "https": "http://103.88.234.239:40005"
         }
-        session.proxies.update(proxies)
+        # session.proxies.update(proxies)
         
         session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         session.verify = False

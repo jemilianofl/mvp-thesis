@@ -9,6 +9,7 @@ import type { Feature } from 'geojson';
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string;
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
@@ -27,8 +28,21 @@ export default function App() {
     }).catch(err => console.error("Error API:", err));
   }, []);
 
+  const recargarFechas = async () => {
+  try {
+    const res = await axios.get(`${API_BASE_URL}/api/fechas/recargar`);
+    setFechas(res.data.fechas);
+    if (res.data.fechas.length > 0) setFechaActiva(res.data.fechas[0]);
+  } catch (err) {
+    console.error("Error recargando fechas:", err);
+  }
+};
+
   useEffect(() => {
+    console.log("Token actual:", import.meta.env.VITE_MAPBOX_TOKEN);
+    
     if (map.current) return;
+    
     map.current = new mapboxgl.Map({
       container: mapContainer.current!,
       style: 'mapbox://styles/mapbox/satellite-v9',
@@ -39,6 +53,7 @@ export default function App() {
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.current.on('load', () => {
+      map.current!.resize();
       map.current!.addSource('src-regional', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.current!.addLayer({
         id: 'layer-regional',
@@ -108,16 +123,17 @@ export default function App() {
   }, [mostrarRegional, mostrarFisica]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-900 font-sans">
-      <Sidebar 
-        fechas={fechas} fechaActiva={fechaActiva} setFechaActiva={setFechaActiva}
-        mostrarRegional={mostrarRegional} setMostrarRegional={setMostrarRegional}
-        mostrarFisica={mostrarFisica} setMostrarFisica={setMostrarFisica}
-      />
-      <div className="flex-1 relative">
-        <div ref={mapContainer} className="absolute inset-0" />
-        <AnalyticsPanel feature={selectedFeature} />
-      </div>
+  <div className="flex h-screen w-screen overflow-hidden bg-slate-900 font-sans">
+    <Sidebar 
+  fechas={fechas} fechaActiva={fechaActiva} setFechaActiva={setFechaActiva}
+  mostrarRegional={mostrarRegional} setMostrarRegional={setMostrarRegional}
+  mostrarFisica={mostrarFisica} setMostrarFisica={setMostrarFisica}
+  recargarFechas={recargarFechas} 
+/>
+    <div className="flex-1 relative h-full w-full">
+      <div ref={mapContainer} className="absolute inset-0 h-full w-full" />
+      <AnalyticsPanel feature={selectedFeature} />
     </div>
-  );
+  </div>
+);
 }

@@ -18,25 +18,23 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
     { name: 'Estrés Hídrico', value: Number(props.ESTRES_HIDRICO) || 0 }
   ];
 
-  const data = rawData
-    .filter(d => d.value !== 0)
-    .map(d => ({
+  const data = rawData.map(d => ({
       ...d,
       fill: d.value < 0 ? '#ef4444' : '#3b82f6'
-    }));
+  }));
 
   return (
     <div className="absolute top-4 right-4 w-80 bg-slate-800/95 backdrop-blur-sm p-5 rounded-xl shadow-2xl border border-slate-700 z-20">
       <h2 className="text-lg font-bold text-white mb-1">Análisis del Tensor</h2>
-      <p className="text-xs text-slate-400 mb-4">Polígono / Hex: {props.ID_POLIGONO}</p>
-      
-      {props.PROBABILIDAD_COLAPSO && (
-        <div className="mb-4 bg-slate-900 p-3 rounded border border-slate-700">
-          <p className="text-xs text-slate-400">Riesgo Calculado (LSTM)</p>
-          <p className="text-2xl font-bold text-emerald-400">{props.PROBABILIDAD_COLAPSO}%</p>
-          <p className="text-xs font-medium uppercase mt-1">{props.NIVEL_RIESGO}</p>
-        </div>
-      )}
+      <p className="text-sm text-slate-200 mb-4">Polígono / Hex: {props.ID_POLIGONO}</p>
+
+{props.PROBABILIDAD_COLAPSO && (
+  <div className="mb-4 bg-slate-900 p-3 rounded border border-slate-700">
+    <p className="text-sm text-slate-200">Riesgo Calculado (LSTM)</p>
+    <p className="text-2xl font-bold text-emerald-400">{props.PROBABILIDAD_COLAPSO}%</p>
+    <p className="text-sm font-medium uppercase mt-1 text-slate-200">{props.NIVEL_RIESGO}</p>
+  </div>
+)}
 
       {data.length > 0 ? (
         <div className="h-48 w-full mt-2">

@@ -110,3 +110,8 @@ def obtener_capa_control(fecha: str = None):
             resultado[v] = pd.to_numeric(resultado[v], errors='coerce').fillna(0).round(3)
             
     return json.loads(resultado.to_json())
+
+@app.get("/api/fechas/recargar")
+def recargar_linea_tiempo():
+    inicializar_motor()
+    return {"mensaje": "Fechas actualizadas correctamente", "fechas": cache.get('fechas_disponibles', [])}

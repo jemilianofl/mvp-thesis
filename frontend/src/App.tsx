@@ -130,10 +130,13 @@ export default function App() {
   mostrarFisica={mostrarFisica} setMostrarFisica={setMostrarFisica}
   recargarFechas={recargarFechas} 
 />
-    <div className="flex-1 relative h-full w-full">
+    {/* Contenedor central del mapa */}
+    <div className="flex-1 relative h-full">
       <div ref={mapContainer} className="absolute inset-0 h-full w-full" />
-      <AnalyticsPanel feature={selectedFeature} />
     </div>
+    
+    {/* El panel derecho ahora es parte del flujo flex */}
+    <AnalyticsPanel feature={selectedFeature} />
   </div>
 );
 }

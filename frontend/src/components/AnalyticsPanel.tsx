@@ -24,8 +24,8 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
   }));
 
   return (
-    <div className="absolute top-4 right-4 w-80 bg-slate-800/95 backdrop-blur-sm p-5 rounded-xl shadow-2xl border border-slate-700 z-20">
-      <h2 className="text-lg font-bold text-white mb-1">Análisis del Tensor</h2>
+  <div className="w-80 bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col overflow-y-auto flex-shrink-0">
+    <h2 className="text-lg font-bold text-white mb-1">Análisis del Tensor</h2>
       <p className="text-sm text-slate-200 mb-4">Polígono / Hex: {props.ID_POLIGONO}</p>
 
 {props.PROBABILIDAD_COLAPSO && (

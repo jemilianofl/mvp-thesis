@@ -23,7 +23,12 @@ def hibridar_modelos():
     print("   ► Inicializando Intérprete TFLite ultraligero...")
     with open(ruta_modelo, "rb") as f:
         modelo_bytes = f.read()
-    interpreter = tf.lite.Interpreter(model_content=modelo_bytes)
+
+    # Habilita Select TF Ops (Flex Delegate) para inferencia
+    interpreter = tf.lite.Interpreter(
+        model_content=modelo_bytes,
+        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
+    )
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()

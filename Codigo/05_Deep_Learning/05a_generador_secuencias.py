@@ -118,11 +118,18 @@ def generar_secuencias_lstm():
     ruta_x = os.path.join(DIR_SALIDA, "X_tensor_lstm.npy")
     ruta_y = os.path.join(DIR_SALIDA, "Y_tensor_lstm.npy")
     ruta_info = os.path.join(DIR_SALIDA, "Info_tensor_lstm.npy")
-    
+
     np.save(ruta_x, X_tensor)
     np.save(ruta_y, Y_tensor)
     np.save(ruta_info, Info_tensor)
-    
+
+    # ------------------ AGREGAR ESTE BLOQUE ------------------
+    print("   ► Generando mapeo de coordenadas y fechas...")
+    df_meta = pd.DataFrame(Info_tensor, columns=['ID_POLIGONO', 'FECHA_DIA'])
+    ruta_meta = os.path.join(DIR_SALIDA, "metadata_lstm.csv")
+    df_meta.to_csv(ruta_meta, index=False)
+    # ---------------------------------------------------------
+
     print(f"   💾 Tensores exportados a: {DIR_SALIDA}\n")
 
 if __name__ == "__main__":

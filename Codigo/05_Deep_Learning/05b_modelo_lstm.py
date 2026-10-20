@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, Input
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import warnings
 
@@ -47,8 +47,9 @@ def construir_y_entrenar_lstm():
     
     print("⚙️ 2/4 Ensamblando la Arquitectura Profunda (LSTM 12D)...")
     modelo = Sequential([
-        LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])),
-        BatchNormalization(),
+    Input(batch_shape=(1, X.shape[1], X.shape[2])),
+    LSTM(64, return_sequences=True),
+    BatchNormalization(),
         Dropout(0.3),
         
         LSTM(32, return_sequences=False),
@@ -70,14 +71,15 @@ def construir_y_entrenar_lstm():
 
     print("🚀 3/4 Entrenando el Motor Predictivo (Esto puede tardar unos minutos)...")
     historia = modelo.fit(
-        X_train, y_train,
-        epochs=100,
-        batch_size=32,
-        validation_data=(X_test, y_test),
-        class_weight=class_weights,
-        callbacks=[early_stop, reduce_lr],
-        verbose=1
-    )
+    X_train, y_train,
+    epochs=100,
+    batch_size=1, 
+    shuffle=False,
+    validation_data=(X_test, y_test),
+    class_weight=class_weights,
+    callbacks=[early_stop, reduce_lr],
+    verbose=1
+)
     
     print("📊 4/4 Evaluando el Desempeño del Modelo en Datos No Vistos...")
     y_pred_probs = modelo.predict(X_test, verbose=0).ravel()
@@ -123,9 +125,27 @@ def construir_y_entrenar_lstm():
     
     ruta_modelo = os.path.join(DIR_DATOS, "modelo_lstm_deforestacion.keras")
     modelo.save(ruta_modelo)
-    
+
     print(f"✅ Panel de evaluación guardado en: {ruta_img}")
     print(f"✅ Cerebro neuronal exportado a: {ruta_modelo}")
+
+    print("\n   ► Comprimiendo red neuronal a formato TFLite (Cuantización)...")
+    converter = tf.lite.TFLiteConverter.from_keras_model(modelo)
+
+    # Configuraciones críticas para capas LSTM dinámicas
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, 
+        tf.lite.OpsSet.SELECT_TF_OPS
+    ]
+    converter._experimental_lower_tensor_list_ops = False
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+    tflite_model = converter.convert()
+
+    ruta_tflite = os.path.join(DIR_DATOS, "modelo_compacto.tflite")
+    with open(ruta_tflite, "wb") as f:
+        f.write(tflite_model)
+    print(f"✅ Modelo compacto exportado a: {ruta_tflite}")
 
 if __name__ == "__main__":
     construir_y_entrenar_lstm()

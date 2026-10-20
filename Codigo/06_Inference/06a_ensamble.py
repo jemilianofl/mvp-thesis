@@ -14,7 +14,20 @@ def hibridar_modelos():
     print("⚙️ INICIANDO ENSAMBLE DE INFERENCIA (LSTM + BASELINES)...")
     
     dir_base = os.path.dirname(os.path.abspath(__file__))
-    ruta_modelo = os.path.abspath(os.path.join(dir_base, "..", "..", "Datos", "05_Deep_Learning", "modelo_lstm_deforestacion.keras"))
+    # ------------------ REEMPLAZAR BLOQUE DE CARGA ------------------
+    ruta_modelo = os.path.abspath(os.path.join(dir_base, "..", "..", "Datos", "05_Deep_Learning", "modelo_compacto.tflite"))
+
+    if not os.path.exists(ruta_modelo):
+        raise FileNotFoundError(f"❌ No se encontró el modelo TFLite en: {ruta_modelo}.")
+        
+    print("   ► Inicializando Intérprete TFLite ultraligero...")
+    with open(ruta_modelo, "rb") as f:
+        modelo_bytes = f.read()
+    interpreter = tf.lite.Interpreter(model_content=modelo_bytes)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    # ---------------------------------------------------------
     dir_salida = os.path.abspath(os.path.join(dir_base, "..", "..", "Datos", "06_Inferencia"))
     os.makedirs(dir_salida, exist_ok=True)
 
@@ -84,6 +97,23 @@ def hibridar_modelos():
         print(f"   ✂️ Aplicando Opción 1 (Modelo Base): Recortando variables extras para evaluar el Baseline...")
         X_tensor_inferencia = X_tensor[:, :, :esperadas]
         
+        # ------------------ REEMPLAZAR LÓGICA DE INFERENCIA ------------------
+        print("   ► Ejecutando predicción en el tensor cuantizado...")
+        X_tensor_inferencia = X_tensor_inferencia.astype(np.float32) # TFLite exige Float32 estricto
+        probabilidades_lstm = []
+
+        for muestra in X_tensor_inferencia:
+            # TFLite procesa de 1 en 1 (o requiere reajustar el tamaño del tensor base)
+            tensor_entrada = np.expand_dims(muestra, axis=0) 
+            interpreter.set_tensor(input_details[0]['index'], tensor_entrada)
+            interpreter.invoke()
+            prob = interpreter.get_tensor(output_details[0]['index'])
+            probabilidades_lstm.append(prob[0][0])
+            
+        probabilidades_lstm = np.array(probabilidades_lstm)
+        probabilidades_lstm = probabilidades_lstm * 100 # Escalar a Porcentaje
+        # ---------------------------------------------------------
+        
     elif actuales < esperadas:
         raise ValueError(f"❌ Faltan datos: El modelo exige {esperadas} variables pero se enviaron {actuales}.")
         
@@ -102,13 +132,18 @@ def hibridar_modelos():
         df_resultados = pd.read_csv(ruta_metadatos)
         
         # Ajustar si las longitudes no coinciden exactamente
+        # ------------------ REEMPLAZAR EXPORTACIÓN FINAL ------------------
         min_len = min(len(df_resultados), len(probabilidades_lstm))
         df_resultados = df_resultados.iloc[:min_len].copy()
-        df_resultados['PROB_LSTM'] = probabilidades_lstm[:min_len]
         
-        ruta_csv_salida = os.path.join(dir_salida, "00_Predicciones_Ensamble_Hibrido.csv")
+        df_resultados['PROBABILIDAD_COLAPSO'] = probabilidades_lstm[:min_len]
+        df_resultados['NIVEL_RIESGO'] = np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 80, 'CRITICO', 
+                                        np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 50, 'ALERTA', 'ESTABLE'))
+        
+        ruta_csv_salida = os.path.join(dir_salida, "01_Reporte_Riesgo_Regional.csv")
         df_resultados.to_csv(ruta_csv_salida, index=False)
         print(f"✅ Ensamble exportado exitosamente a {ruta_csv_salida}\n")
+    # ---------------------------------------------------------
     else:
         print(f"   ⚠️️ No se encontraron metadatos CSV válidos. Las predicciones no se pudieron acoplar a sus coordenadas.")
 

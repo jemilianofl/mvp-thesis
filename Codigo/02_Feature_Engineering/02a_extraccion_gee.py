@@ -4,6 +4,8 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import ee
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -36,8 +38,13 @@ class EarthEnginePipeline:
         os.makedirs(self.dir_salida, exist_ok=True)
         os.makedirs(self.reports_folder, exist_ok=True)
         
-        self.fecha_inicio = '2017-01-01'
-        self.fecha_fin = '2026-12-31'
+        # --- CÁLCULO DINÁMICO DE FECHAS ---
+        fecha_actual = datetime.now()
+        
+        self.fecha_inicio = '2017-01-01' # Mantenemos tu histórico desde 2017
+        self.fecha_fin = fecha_actual.strftime('%Y-%m-%d') # Fecha Final Dinámica (Hoy)
+        
+        print(f"📡 Rango temporal configurado: {self.fecha_inicio} a {self.fecha_fin}")
         self.max_workers = 3
 
     def _calcular_indices_landsat(self, image):
@@ -61,8 +68,20 @@ class EarthEnginePipeline:
                 [bounds[0], bounds[1]]
             ]])
             
-            landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2").filterBounds(ee_geom).filterDate(self.fecha_inicio, self.fecha_fin).filter(ee.Filter.lt('CLOUD_COVER', 30)).map(self._calcular_indices_landsat)
-            sentinel1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(ee_geom).filterDate(self.fecha_inicio, self.fecha_fin).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH')).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')).filter(ee.Filter.eq('instrumentMode', 'IW'))
+            # Filtro usando la fecha dinámica self.fecha_fin
+            landsat = (ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+                       .filterBounds(ee_geom)
+                       .filterDate(self.fecha_inicio, self.fecha_fin)
+                       .filter(ee.Filter.lt('CLOUD_COVER', 30))
+                       .map(self._calcular_indices_landsat))
+            
+            # Filtro usando la fecha dinámica self.fecha_fin
+            sentinel1 = (ee.ImageCollection('COPERNICUS/S1_GRD')
+                         .filterBounds(ee_geom)
+                         .filterDate(self.fecha_inicio, self.fecha_fin)
+                         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+                         .filter(ee.Filter.eq('instrumentMode', 'IW')))
             
             def reducir_optico(img):
                 mes = ee.Date(img.get('system:time_start')).format('YYYY-MM')
@@ -105,7 +124,9 @@ class EarthEnginePipeline:
         tareas = []
         for idx, row in gdf.iterrows():
             pol_id = str(row['ID_POLIGONO']) if 'ID_POLIGONO' in row else str(idx)
-            if os.path.exists(os.path.join(self.dir_salida, f"gee_poligono_{pol_id}.parquet")): continue
+            # Nota: Si quieres re-descargar polígonos que ya existen pero con las nuevas fechas, 
+            # podrías necesitar comentar la siguiente línea o eliminar la carpeta "gee_parquet".
+            #if os.path.exists(os.path.join(self.dir_salida, f"gee_poligono_{pol_id}.parquet")): continue
             tareas.append((pol_id, row.geometry.bounds))
 
         if not tareas:
@@ -135,7 +156,6 @@ class EarthEnginePipeline:
         
         cobertura = df_all.groupby('AÑO').agg({'NDVI': lambda x: x.notna().sum(), 'RADAR_VH': lambda x: x.notna().sum()}).reset_index()
         
-        # Forzar estilos completamente en blanco (Limpieza de caché de Matplotlib)
         plt.rcParams.update(plt.rcParamsDefault)
         plt.style.use('default')
         sns.set_theme(style="whitegrid")

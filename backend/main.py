@@ -25,7 +25,7 @@ cache = {}
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución Diaria Estricta)...")
+    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución Diaria Continua)...")
     
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
@@ -64,9 +64,12 @@ def inicializar_motor():
     cache['fechas_disponibles'] = sorted(list(fechas_totales), reverse=True)
 
 def sanear_dataframe(df):
-    """Limpia nulos e infinitos asegurando consistencia de tipos para el Frontend"""
+    """Limpia nulos e infinitos ASEGURANDO QUE LA GEOMETRÍA NO SE BORRE"""
     df = df.replace([np.inf, -np.inf], np.nan)
     for col in df.columns:
+        if col == 'geometry': 
+            continue # ¡VITAL! Evita que el mapa se vuelva invisible
+            
         if df[col].dtype == 'object':
             df[col] = df[col].fillna('ESTABLE')
         else:
@@ -134,6 +137,24 @@ def obtener_serie_tiempo(id_poligono: str):
         df_merged = pred_pol.copy()
     
     df_merged = df_merged.sort_values('FECHA_CRUCE')
+    
+    # --- FIX: FORZAR FRECUENCIA DIARIA CONTINUA (Rellenar huecos satelitales) ---
+    if not df_merged.empty:
+        # Convertir a formato fecha real para manipular huecos temporales
+        df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'])
+        df_merged = df_merged.set_index('FECHA_CRUCE')
+        
+        # Crear un calendario diario perfecto desde el inicio hasta el final
+        rango_diario = pd.date_range(start=df_merged.index.min(), end=df_merged.index.max(), freq='D')
+        df_merged = df_merged.reindex(rango_diario)
+        
+        # Forward Fill: Propaga la última lectura satelital a los días vacíos siguientes
+        df_merged = df_merged.ffill().fillna(0)
+        
+        # Restaurar formato para el Frontend
+        df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
+        df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
+    
     df_merged = sanear_dataframe(df_merged)
     
     resultados = []

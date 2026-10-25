@@ -33,7 +33,8 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
       .finally(() => setLoading(false));
   }, [feature]);
 
-  if (!feature?.properties) return null;
+  if (!feature || !feature.properties) return null;
+  
   const props = feature.properties as Record<string, any>;
   const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
 
@@ -46,11 +47,12 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
 
   const riesgoNum = Number(props.PROBABILIDAD_COLAPSO) || 0;
   const nivelRiesgoSeguro = String(props.NIVEL_RIESGO || (riesgoNum > 0 ? 'CALCULADO' : 'ESTABLE')).toUpperCase();
+  const hexId = String(props.ID_POLIGONO || 'N/A');
 
   return (
     <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col overflow-y-auto flex-shrink-0">
       <h2 className="text-lg font-bold text-white mb-1">Evolución del Cuadrante</h2>
-      <p className="text-sm text-slate-400 mb-4">Identificador: {String(props.ID_POLIGONO || 'N/A')}</p>
+      <p className="text-sm text-slate-400 mb-4">Identificador: {hexId}</p>
 
       <div className="mb-4 bg-slate-900 p-3 rounded border border-slate-700 flex justify-between items-center shadow-inner">
         <div>

@@ -33,17 +33,18 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
       .finally(() => setLoading(false));
   }, [feature]);
 
-  if (!feature || !feature.properties) return null;
-  
-  const props = feature.properties as Record<string, any>;
-  const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
-
+  // FIX CRÍTICO: useMemo DEBE ir antes de cualquier "return" (Reglas estandar de React Hooks)
   const dynamicKeys = useMemo(() => {
     if (timeSeries.length === 0) return [];
     return Object.keys(timeSeries[0]).filter(key => 
       !['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED', 'ID_POLIGONO', 'NIVEL_RIESGO'].includes(key)
     );
   }, [timeSeries]);
+
+  if (!feature || !feature.properties) return null;
+  
+  const props = feature.properties as Record<string, any>;
+  const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
 
   const riesgoNum = Number(props.PROBABILIDAD_COLAPSO) || 0;
   const nivelRiesgoSeguro = String(props.NIVEL_RIESGO || (riesgoNum > 0 ? 'CALCULADO' : 'ESTABLE')).toUpperCase();

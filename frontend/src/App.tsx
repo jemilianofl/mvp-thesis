@@ -52,26 +52,25 @@ export default function App() {
     map.current.on('load', () => {
       map.current!.resize();
       
-      // Capa de Riesgo Regional (Suavizada)
       map.current!.addSource('src-regional', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.current!.addLayer({
         id: 'layer-regional',
         type: 'fill',
         source: 'src-regional',
         paint: {
-          'fill-color': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], '#22c55e', 30, '#fde047', 50, '#f97316', 80, '#ef4444'],
-          'fill-opacity': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], 0.02, 30, 0.2, 50, 0.4, 80, 0.6] // Verde casi invisible (0.02)
+          'fill-color': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], '#86efac', 30, '#fde047', 50, '#f97316', 80, '#ef4444'],
+          'fill-opacity': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], 0.15, 30, 0.4, 50, 0.6, 80, 0.8],
+          'fill-outline-color': 'rgba(0,0,0,0.1)' // Contorno del panal visible
         }
       });
 
-      // Capa de Zonas de Verificación (Bordes gruesos de alto contraste)
       map.current!.addSource('src-fisica', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.current!.addLayer({
         id: 'layer-fisica',
         type: 'fill',
         source: 'src-fisica',
         paint: {
-          'fill-color': 'rgba(0,0,0,0)' // Fondo transparente para ver solo el contorno
+          'fill-color': 'rgba(0,0,0,0)' 
         }
       });
       map.current!.addLayer({
@@ -79,8 +78,8 @@ export default function App() {
         type: 'line',
         source: 'src-fisica',
         paint: {
-          'line-color': ['case', ['==', ['to-number', ['get', 'ENSAMBLE_PRED']], 1], '#ef4444', ['==', ['to-number', ['get', 'ENSAMBLE_PRED']], -1], '#06b6d4', 'rgba(0,0,0,0)'], // Rojo encendido o Cyan
-          'line-width': 4 // Borde más grueso
+          'line-color': ['case', ['==', ['to-number', ['get', 'ENSAMBLE_PRED']], 1], '#ef4444', ['==', ['to-number', ['get', 'ENSAMBLE_PRED']], -1], '#06b6d4', 'rgba(0,0,0,0)'],
+          'line-width': 4 
         }
       });
 

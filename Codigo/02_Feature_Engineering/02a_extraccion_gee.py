@@ -39,10 +39,11 @@ class EarthEnginePipeline:
         os.makedirs(self.reports_folder, exist_ok=True)
         
         # --- CÁLCULO DINÁMICO DE FECHAS ---
-        fecha_actual = datetime.now()
+        self.fecha_actual = datetime.now()
         
-        self.fecha_inicio = '2017-01-01' # Mantenemos tu histórico desde 2017
-        self.fecha_fin = fecha_actual.strftime('%Y-%m-%d') # Fecha Final Dinámica (Hoy)
+        self.fecha_inicio = '2017-01-01'
+        self.fecha_fin = self.fecha_actual.strftime('%Y-%m-%d')
+        self.mes_actual_str = self.fecha_actual.strftime('%Y-%m') # Usado para verificar frescura de datos
         
         print(f"📡 Rango temporal configurado: {self.fecha_inicio} a {self.fecha_fin}")
         self.max_workers = 3
@@ -68,14 +69,12 @@ class EarthEnginePipeline:
                 [bounds[0], bounds[1]]
             ]])
             
-            # Filtro usando la fecha dinámica self.fecha_fin
             landsat = (ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
                        .filterBounds(ee_geom)
                        .filterDate(self.fecha_inicio, self.fecha_fin)
                        .filter(ee.Filter.lt('CLOUD_COVER', 30))
                        .map(self._calcular_indices_landsat))
             
-            # Filtro usando la fecha dinámica self.fecha_fin
             sentinel1 = (ee.ImageCollection('COPERNICUS/S1_GRD')
                          .filterBounds(ee_geom)
                          .filterDate(self.fecha_inicio, self.fecha_fin)
@@ -84,14 +83,14 @@ class EarthEnginePipeline:
                          .filter(ee.Filter.eq('instrumentMode', 'IW')))
             
             def reducir_optico(img):
-                mes = ee.Date(img.get('system:time_start')).format('YYYY-MM')
+                dia = ee.Date(img.get('system:time_start')).format('YYYY-MM-dd')
                 stats = img.select(['NDVI', 'BSI', 'GCI']).reduceRegion(reducer=ee.Reducer.mean(), geometry=ee_geom, scale=30, maxPixels=1e9)
-                return ee.Feature(None, {'FECHA_MES': mes, 'NDVI': stats.get('NDVI'), 'BSI': stats.get('BSI'), 'GCI': stats.get('GCI')})
+                return ee.Feature(None, {'FECHA_DIA': dia, 'NDVI': stats.get('NDVI'), 'BSI': stats.get('BSI'), 'GCI': stats.get('GCI')})
                 
             def reducir_radar(img):
-                mes = ee.Date(img.get('system:time_start')).format('YYYY-MM')
+                dia = ee.Date(img.get('system:time_start')).format('YYYY-MM-dd')
                 stats = img.select(['VH', 'VV']).reduceRegion(reducer=ee.Reducer.mean(), geometry=ee_geom, scale=10, maxPixels=1e9)
-                return ee.Feature(None, {'FECHA_MES': mes, 'RADAR_VH': stats.get('VH'), 'RADAR_VV': stats.get('VV')})
+                return ee.Feature(None, {'FECHA_DIA': dia, 'RADAR_VH': stats.get('VH'), 'RADAR_VV': stats.get('VV')})
 
             fechas_opticas = landsat.map(reducir_optico).getInfo().get('features', [])
             fechas_radar = sentinel1.map(reducir_radar).getInfo().get('features', [])
@@ -101,19 +100,19 @@ class EarthEnginePipeline:
             
             if df_opt.empty and df_rad.empty: return False
                 
-            if not df_opt.empty: df_opt = df_opt.groupby('FECHA_MES').mean().reset_index()
-            if not df_rad.empty: df_rad = df_rad.groupby('FECHA_MES').mean().reset_index()
+            if not df_opt.empty: df_opt = df_opt.groupby('FECHA_DIA').mean().reset_index()
+            if not df_rad.empty: df_rad = df_rad.groupby('FECHA_DIA').mean().reset_index()
             
             if df_opt.empty: df_final = df_rad
             elif df_rad.empty: df_final = df_opt
-            else: df_final = pd.merge(df_opt, df_rad, on='FECHA_MES', how='outer', validate='one_to_one')
+            else: df_final = pd.merge(df_opt, df_rad, on='FECHA_DIA', how='outer', validate='one_to_one')
                 
             df_final['ID_POLIGONO'] = str(pol_id)
             ruta_pq = os.path.join(self.dir_salida, f"gee_poligono_{pol_id}.parquet")
             df_final.to_parquet(ruta_pq, index=False)
             return True
             
-        except Exception:
+        except Exception as e:
             return False
 
     def procesar_lote_masivo(self):
@@ -122,25 +121,44 @@ class EarthEnginePipeline:
             
         gdf = gpd.read_file(self.ruta_poligonos)
         tareas = []
+        
+        # --- LÓGICA DE ACTUALIZACIÓN INTELIGENTE ---
         for idx, row in gdf.iterrows():
             pol_id = str(row['ID_POLIGONO']) if 'ID_POLIGONO' in row else str(idx)
-            # Nota: Si quieres re-descargar polígonos que ya existen pero con las nuevas fechas, 
-            # podrías necesitar comentar la siguiente línea o eliminar la carpeta "gee_parquet".
-            #if os.path.exists(os.path.join(self.dir_salida, f"gee_poligono_{pol_id}.parquet")): continue
-            tareas.append((pol_id, row.geometry.bounds))
+            ruta_cache = os.path.join(self.dir_salida, f"gee_poligono_{pol_id}.parquet")
+            
+            necesita_descarga = True
+            
+            if os.path.exists(ruta_cache):
+                try:
+                    df_temp = pd.read_parquet(ruta_cache)
+                    col_temporal = 'FECHA_DIA' if 'FECHA_DIA' in df_temp.columns else 'FECHA_MES'
+                    ultima_fecha = df_temp[col_temporal].max()
+                    
+                    # Si el archivo tiene datos del mes actual o reciente (al menos 30 días), lo consideramos válido
+                    if ultima_fecha and ultima_fecha[:7] >= (self.fecha_actual - relativedelta(months=1)).strftime('%Y-%m'):
+                        necesita_descarga = False 
+                except:
+                    pass # Si el archivo está corrupto, forzamos descarga
+                    
+            if necesita_descarga:
+                # Si existe pero está viejo, lo borramos para sobreescribirlo limpio
+                if os.path.exists(ruta_cache):
+                    os.remove(ruta_cache)
+                tareas.append((pol_id, row.geometry.bounds))
 
         if not tareas:
-            print("   ✅ Todos los polígonos ya han sido extraídos previamente.")
+            print("   ✅ Todos los polígonos ya están actualizados hasta la fecha reciente.")
             return
             
-        print(f"   ► Conectando a servidores de Google para extraer {len(tareas)} polígonos...")
+        print(f"   ► Conectando a servidores de Google para actualizar {len(tareas)} polígonos (Descarga Fresca)...")
         exitos = 0
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futuros = {executor.submit(self.extraer_datos_poligono, t[0], t[1]): t for t in tareas}
             for fut in tqdm(as_completed(futuros), total=len(tareas)):
                 if fut.result(): exitos += 1
                 
-        print(f"\n   ✅ Extracción finalizada. {exitos} polígonos descargados.")
+        print(f"\n   ✅ Extracción finalizada. {exitos} polígonos actualizados.")
 
     def generar_reporte_metodologico(self):
         print("\n📊 [ETAPA 2] Generando Gráficas de Evidencia Académica...")
@@ -151,9 +169,21 @@ class EarthEnginePipeline:
         if not df_list: return
         
         df_all = pd.concat(df_list, ignore_index=True)
-        df_all['FECHA_MES'] = pd.to_datetime(df_all['FECHA_MES'])
-        df_all['AÑO'] = df_all['FECHA_MES'].dt.year
         
+        # --- FIX: SOPORTE DINÁMICO PARA FECHAS DIARIAS O MENSUALES ---
+        col_temporal = 'FECHA_DIA' if 'FECHA_DIA' in df_all.columns else 'FECHA_MES'
+        
+        if col_temporal not in df_all.columns:
+            print("   ⚠️ No se encontró columna temporal para la gráfica. Saltando reporte.")
+            return
+
+        df_all['FECHA_PARSED'] = pd.to_datetime(df_all[col_temporal])
+        df_all['AÑO'] = df_all['FECHA_PARSED'].dt.year
+        
+        # Si la columna RADAR_VH no existe (ej. falló descarga satelital), creamos una vacía para evitar error
+        if 'RADAR_VH' not in df_all.columns:
+            df_all['RADAR_VH'] = None
+            
         cobertura = df_all.groupby('AÑO').agg({'NDVI': lambda x: x.notna().sum(), 'RADAR_VH': lambda x: x.notna().sum()}).reset_index()
         
         plt.rcParams.update(plt.rcParamsDefault)
@@ -165,7 +195,7 @@ class EarthEnginePipeline:
         ax.plot(cobertura['AÑO'], cobertura['NDVI'], marker='o', color='#2ca02c', linewidth=2.5, label='Observaciones Ópticas (Landsat 8 - NDVI)')
         ax.plot(cobertura['AÑO'], cobertura['RADAR_VH'], marker='s', color='#1f77b4', linewidth=2.5, linestyle='--', label='Observaciones Radar (Sentinel-1 - VH)')
         
-        ax.set_title('Densidad Histórica de Observaciones Satelitales Mensuales', fontsize=14, fontweight='bold', pad=15, color='black')
+        ax.set_title('Densidad Histórica de Observaciones Satelitales (Actualizado)', fontsize=14, fontweight='bold', pad=15, color='black')
         ax.set_xlabel('Año de Observación', fontsize=12, color='black')
         ax.set_ylabel('Cantidad de Observaciones Útiles', fontsize=12, color='black')
         ax.tick_params(colors='black', labelsize=10)

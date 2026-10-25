@@ -84,7 +84,13 @@ def obtener_capa_regional(fecha: str = None):
     gdf = cache['malla_regional'].copy()
     df = cache['datos_regionales']
     
-    df_filtrado = df[df['FECHA_CRUCE'] == fecha] if fecha else df
+    if fecha:
+        # MEMORIA FOTOGRÁFICA: Tomar el histórico HASTA la fecha seleccionada y quedarse con la última foto válida
+        df_past = df[df['FECHA_CRUCE'] <= fecha]
+        df_filtrado = df_past.sort_values('FECHA_CRUCE').groupby('ID_POLIGONO').last().reset_index()
+    else:
+        df_filtrado = df.sort_values('FECHA_CRUCE').groupby('ID_POLIGONO').last().reset_index()
+        
     resultado = gdf.merge(df_filtrado, on='ID_POLIGONO', how='left')
     
     if 'PROBABILIDAD_COLAPSO' not in resultado.columns:
@@ -103,8 +109,12 @@ def obtener_capa_control(fecha: str = None):
     gdf = cache['poligonos_control'].copy()
     df = cache['historial_control']
     
-    df_filtrado = df[df['FECHA_CRUCE'] == fecha] if fecha else df
-    df_audit = df_filtrado.sort_values(by=['ID_POLIGONO', 'ENSAMBLE_PRED']).groupby('ID_POLIGONO').first().reset_index()
+    if fecha:
+        df_past = df[df['FECHA_CRUCE'] <= fecha]
+        df_audit = df_past.sort_values(by=['ID_POLIGONO', 'ENSAMBLE_PRED']).groupby('ID_POLIGONO').last().reset_index()
+    else:
+        df_audit = df.sort_values(by=['ID_POLIGONO', 'ENSAMBLE_PRED']).groupby('ID_POLIGONO').last().reset_index()
+        
     resultado = gdf.merge(df_audit, on='ID_POLIGONO', how='left')
     
     if 'ENSAMBLE_PRED' not in resultado.columns:
@@ -134,13 +144,17 @@ def obtener_serie_tiempo(id_poligono: str):
     else:
         df_merged = pred_pol.copy()
     
-    # Relleno diario estricto (Forward Fill) para evitar saltos en la gráfica
+    df_merged = df_merged.sort_values('FECHA_CRUCE')
+    
+    # RELLENO DIARIO: Extiende la línea desde el primer día hasta la fecha máxima global disponible
     if not df_merged.empty:
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
         if not df_merged.empty:
-            rango_diario = pd.date_range(start=df_merged.index.min(), end=df_merged.index.max(), freq='D')
+            fecha_maxima_sistema = pd.to_datetime(cache['fechas_disponibles'][0])
+            rango_diario = pd.date_range(start=df_merged.index.min(), end=fecha_maxima_sistema, freq='D')
+            
             df_merged = df_merged.reindex(rango_diario).ffill().fillna(0)
             df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
             df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')

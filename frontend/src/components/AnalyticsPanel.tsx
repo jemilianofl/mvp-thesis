@@ -27,13 +27,12 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
     axios.get(`${API_BASE_URL}/api/serie_tiempo/${idPoligono}`)
       .then(res => setTimeSeries(res.data))
       .catch(err => {
-        console.error("Error cargando serie temporal:", err);
-        setError("Fallo al consultar historial del cuadrante.");
+        console.error("Error:", err);
+        setError("Fallo al consultar historial.");
       })
       .finally(() => setLoading(false));
   }, [feature]);
 
-  // FIX CRÍTICO: useMemo DEBE ir antes de cualquier "return" (Reglas estandar de React Hooks)
   const dynamicKeys = useMemo(() => {
     if (timeSeries.length === 0) return [];
     return Object.keys(timeSeries[0]).filter(key => 
@@ -70,7 +69,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
       <div className="min-h-[300px] w-full">
         {loading ? (
           <div className="h-full flex items-center justify-center">
-            <p className="text-slate-500 text-sm animate-pulse">Consultando lecturas satelitales...</p>
+            <p className="text-slate-500 text-sm animate-pulse">Consultando satélites...</p>
           </div>
         ) : error ? (
           <div className="h-full flex items-center justify-center">
@@ -78,10 +77,20 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
           </div>
         ) : timeSeries.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={timeSeries} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+            <LineChart data={timeSeries} margin={{ top: 10, right: 0, left: -20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
               
-              <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} tickMargin={10} minTickGap={30} />
+              {/* Eje X Angulado para mostrar claramente la secuencia diaria */}
+              <XAxis 
+                dataKey="fecha" 
+                stroke="#94a3b8" 
+                fontSize={10} 
+                tickMargin={5} 
+                minTickGap={20} 
+                angle={-45} 
+                textAnchor="end" 
+              />
+              
               <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
               <YAxis yAxisId="right" orientation="right" stroke="#fbbf24" fontSize={10} domain={[0, 100]} />
               
@@ -90,7 +99,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
                 itemStyle={{ fontSize: '12px' }}
                 labelStyle={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}
               />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
               
               {dynamicKeys.map((key, index) => (
                 <Line 
@@ -120,7 +129,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico para trazar evolución.</p>
+          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico.</p>
         )}
       </div>
       

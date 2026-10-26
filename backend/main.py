@@ -25,7 +25,7 @@ cache = {}
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución Diaria Continua)...")
+    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución de 7 Días)...")
     
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
@@ -85,7 +85,6 @@ def obtener_capa_regional(fecha: str = None):
     df = cache['datos_regionales']
     
     if fecha:
-        # MEMORIA FOTOGRÁFICA: Tomar el histórico HASTA la fecha seleccionada y quedarse con la última foto válida
         df_past = df[df['FECHA_CRUCE'] <= fecha]
         df_filtrado = df_past.sort_values('FECHA_CRUCE').groupby('ID_POLIGONO').last().reset_index()
     else:
@@ -124,7 +123,8 @@ def obtener_capa_control(fecha: str = None):
     return json.loads(resultado.to_json())
 
 @app.get("/api/serie_tiempo/{id_poligono}")
-def obtener_serie_tiempo(id_poligono: str):
+def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
+    """Devuelve exactamente los últimos 7 días desde la fecha seleccionada para evitar líneas planas."""
     if 'historial_control' not in cache or 'datos_regionales' not in cache: return []
     
     df_hist = cache['historial_control']
@@ -146,18 +146,26 @@ def obtener_serie_tiempo(id_poligono: str):
     
     df_merged = df_merged.sort_values('FECHA_CRUCE')
     
-    # RELLENO DIARIO: Extiende la línea desde el primer día hasta la fecha máxima global disponible
+    # -------------------------------------------------------------
+    # RECORTAR A UNA SEMANA Y PROPAGAR LAS 12 VARIABLES
+    # -------------------------------------------------------------
     if not df_merged.empty:
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
-        if not df_merged.empty:
-            fecha_maxima_sistema = pd.to_datetime(cache['fechas_disponibles'][0])
-            rango_diario = pd.date_range(start=df_merged.index.min(), end=fecha_maxima_sistema, freq='D')
-            
-            df_merged = df_merged.reindex(rango_diario).ffill().fillna(0)
-            df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
-            df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
+        # Propagamos datos hacia atrás y adelante para que las 12 variables existan en todo momento
+        df_merged = df_merged.ffill().bfill().fillna(0)
+        
+        fecha_fin = pd.to_datetime(fecha) if fecha else df_merged.index.max()
+        fecha_inicio = fecha_fin - pd.Timedelta(days=7) # Ventana estricta de 1 semana
+        
+        rango_semanal = pd.date_range(start=fecha_inicio, end=fecha_fin, freq='D')
+        
+        df_merged = df_merged.reindex(rango_semanal)
+        df_merged = df_merged.ffill().bfill().fillna(0)
+        
+        df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
+        df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
     
     df_merged = sanear_dataframe(df_merged)
     

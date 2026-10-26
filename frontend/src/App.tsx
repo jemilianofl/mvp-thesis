@@ -60,7 +60,7 @@ export default function App() {
         paint: {
           'fill-color': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], '#86efac', 30, '#fde047', 50, '#f97316', 80, '#ef4444'],
           'fill-opacity': ['step', ['to-number', ['get', 'PROBABILIDAD_COLAPSO']], 0.15, 30, 0.4, 50, 0.6, 80, 0.8],
-          'fill-outline-color': 'rgba(0,0,0,0.1)' // Contorno del panal visible
+          'fill-outline-color': 'rgba(0,0,0,0.1)' 
         }
       });
 
@@ -83,10 +83,12 @@ export default function App() {
         }
       });
 
+      // Solo abrimos el panel si se da click en un polígono existente
       map.current!.on('click', (e) => {
         const features = map.current!.queryRenderedFeatures(e.point, { layers: ['layer-regional', 'layer-fisica'] });
-        if (features.length) setSelectedFeature((features[0] as unknown) as Feature);
-        else setSelectedFeature(null);
+        if (features.length) {
+          setSelectedFeature((features[0] as unknown) as Feature);
+        }
       });
 
       ['layer-regional', 'layer-fisica'].forEach(layer => {
@@ -146,7 +148,15 @@ export default function App() {
       <div className="flex-1 relative h-full">
         <div ref={mapContainer} className="absolute inset-0 h-full w-full" />
       </div>
-      <AnalyticsPanel feature={selectedFeature} />
+      
+      {/* RENDERIZADO CONDICIONAL DEL PANEL */}
+      {selectedFeature && (
+        <AnalyticsPanel 
+          feature={selectedFeature} 
+          fecha={fechaActiva} 
+          onClose={() => setSelectedFeature(null)} 
+        />
+      )}
     </div>
   );
 }

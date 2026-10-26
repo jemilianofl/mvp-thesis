@@ -7,7 +7,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const COLORS = ['#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#06b6d4', '#eab308', '#a855f7', '#14b8a6', '#f43f5e', '#84cc16', '#6366f1', '#f97316'];
 
 interface AnalyticsPanelProps {
-  readonly feature: Feature;
+  readonly feature: Feature | null;
   readonly fecha: string;
   readonly onClose: () => void;
 }
@@ -18,12 +18,14 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const idPoligono = feature.properties?.ID_POLIGONO;
-    if (!idPoligono) return;
+    const idPoligono = feature?.properties?.ID_POLIGONO;
+    if (!idPoligono) {
+      setTimeSeries([]);
+      return;
+    }
     
     setLoading(true);
     setError(null);
-    // Solicitamos al backend el historial hasta la fecha activa
     axios.get(`${API_BASE_URL}/api/serie_tiempo/${idPoligono}?fecha=${fecha}`)
       .then(res => setTimeSeries(res.data))
       .catch(err => {
@@ -40,6 +42,14 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
     );
   }, [timeSeries]);
 
+  if (!feature || !feature.properties) {
+      return (
+          <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col justify-center items-center flex-shrink-0">
+             <p className="text-slate-500 text-sm">Seleccione un cuadrante en el mapa para ver su evolución.</p>
+          </div>
+      );
+  }
+  
   const props = feature.properties as Record<string, any>;
   const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
 
@@ -50,7 +60,6 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
   return (
     <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col overflow-y-auto flex-shrink-0 relative">
       
-      {/* Botón Cerrar Panel */}
       <button 
         onClick={onClose} 
         className="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-lg cursor-pointer"
@@ -73,7 +82,7 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
         </div>
       </div>
 
-      <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-2">Comportamiento Semanal (Últimos 7 Días)</h3>
+      <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-2">Comportamiento Semanal (Últimos 7 Días Registrados)</h3>
       <div className="min-h-[300px] w-full">
         {loading ? (
           <div className="h-full flex items-center justify-center">
@@ -88,7 +97,7 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
             <LineChart data={timeSeries} margin={{ top: 10, right: 0, left: -20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
               
-              <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} tickMargin={5} angle={-45} textAnchor="end" />
+              <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} tickMargin={5} minTickGap={20} angle={-45} textAnchor="end" />
               <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
               <YAxis yAxisId="right" orientation="right" stroke="#fbbf24" fontSize={10} domain={[0, 100]} />
               
@@ -107,8 +116,8 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
                   dataKey={key} 
                   stroke={COLORS[index % COLORS.length]} 
                   strokeWidth={2} 
-                  dot={{ r: 3 }} 
-                  activeDot={{ r: 5 }} 
+                  dot={false} 
+                  activeDot={{ r: 4 }} 
                   name={key.replace(/_/g, ' ')} 
                 />
               ))}
@@ -120,14 +129,14 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
                 stroke="#fbbf24" 
                 strokeWidth={2} 
                 strokeDasharray="4 4" 
-                dot={{ r: 3 }} 
-                activeDot={{ r: 5 }} 
+                dot={false} 
+                activeDot={{ r: 4 }} 
                 name="Probabilidad Riesgo (%)" 
               />
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico.</p>
+          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico para trazar evolución.</p>
         )}
       </div>
       

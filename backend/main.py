@@ -25,7 +25,7 @@ cache = {}
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución Diaria Continua)...")
+    print("🚀 Levantando Backend de Monitoreo Forestal (Lectura Activa Continua)...")
     
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
@@ -66,7 +66,8 @@ def inicializar_motor():
 def sanear_dataframe(df):
     df = df.replace([np.inf, -np.inf], np.nan)
     for col in df.columns:
-        if col == 'geometry': continue 
+        if col == 'geometry': 
+            continue 
         if df[col].dtype == 'object':
             df[col] = df[col].fillna('ESTABLE')
         else:
@@ -91,8 +92,10 @@ def obtener_capa_regional(fecha: str = None):
         
     resultado = gdf.merge(df_filtrado, on='ID_POLIGONO', how='left')
     
-    if 'PROBABILIDAD_COLAPSO' not in resultado.columns: resultado['PROBABILIDAD_COLAPSO'] = 0
-    if 'NIVEL_RIESGO' not in resultado.columns: resultado['NIVEL_RIESGO'] = 'ESTABLE'
+    if 'PROBABILIDAD_COLAPSO' not in resultado.columns:
+        resultado['PROBABILIDAD_COLAPSO'] = 0
+    if 'NIVEL_RIESGO' not in resultado.columns:
+        resultado['NIVEL_RIESGO'] = 'ESTABLE'
         
     resultado = sanear_dataframe(resultado)
     resultado['PROBABILIDAD_COLAPSO'] = resultado['PROBABILIDAD_COLAPSO'].round(1)
@@ -113,7 +116,8 @@ def obtener_capa_control(fecha: str = None):
         
     resultado = gdf.merge(df_audit, on='ID_POLIGONO', how='left')
     
-    if 'ENSAMBLE_PRED' not in resultado.columns: resultado['ENSAMBLE_PRED'] = 0
+    if 'ENSAMBLE_PRED' not in resultado.columns:
+        resultado['ENSAMBLE_PRED'] = 0
         
     resultado = sanear_dataframe(resultado)
     return json.loads(resultado.to_json())
@@ -130,11 +134,9 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     
     if hist_pol.empty and pred_pol.empty: return []
 
-    # Fusión robusta de los historiales
     if not hist_pol.empty and not pred_pol.empty:
         hist_pol = hist_pol.set_index('FECHA_CRUCE')
         pred_pol = pred_pol.set_index('FECHA_CRUCE')
-        # Combine first preserva las 12 variables sin crear duplicados NaN
         df_merged = pred_pol.combine_first(hist_pol).reset_index()
     elif not hist_pol.empty:
         df_merged = hist_pol.copy()
@@ -145,21 +147,23 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     df_merged = df_merged.sort_values('FECHA_CRUCE')
     
     if not df_merged.empty:
+        # 1. Filtramos hasta la fecha que eligió el usuario en la interfaz
+        if fecha:
+            df_merged = df_merged[df_merged['FECHA_CRUCE'] <= fecha]
+            
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
-        df_merged = df_merged.ffill().bfill().fillna(0)
-        
-        fecha_fin = pd.to_datetime(fecha) if fecha else df_merged.index.max()
-        fecha_inicio = fecha_fin - pd.Timedelta(days=7)
-        
-        rango_semanal = pd.date_range(start=fecha_inicio, end=fecha_fin, freq='D')
-        
-        df_merged = df_merged.reindex(rango_semanal)
-        df_merged = df_merged.ffill().bfill().fillna(0)
-        
-        df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
-        df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
+        # 2. Rellenamos huecos internos sin estirar artificialmente meses vacíos al futuro
+        if not df_merged.empty:
+            rango_real = pd.date_range(start=df_merged.index.min(), end=df_merged.index.max(), freq='D')
+            df_merged = df_merged.reindex(rango_real).ffill().bfill().fillna(0)
+            
+            # 3. FIX: Seleccionar los últimos 7 días REALES que tienen información
+            df_merged = df_merged.tail(7)
+            
+            df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
+            df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
     
     df_merged = sanear_dataframe(df_merged)
     
@@ -169,6 +173,7 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     for _, row in df_merged.iterrows():
         dict_row = {"fecha": row['FECHA_CRUCE']}
         for col in cols_numericas:
+            # Excluimos variables sucias
             if col not in ['ID_POLIGONO', 'Unnamed: 0', 'index']:
                 dict_row[col] = round(float(row[col]), 3)
                 

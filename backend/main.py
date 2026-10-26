@@ -25,7 +25,7 @@ cache = {}
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Monitoreo Forestal (Lectura Activa Continua)...")
+    print("🚀 Levantando Backend de Monitoreo Forestal (Calendario Diario Continuo)...")
     
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
@@ -61,7 +61,22 @@ def inicializar_motor():
             cache['fechas_control'] = set(df_hist['FECHA_CRUCE'].unique())
 
     fechas_totales = cache.get('fechas_regionales', set()) | cache.get('fechas_control', set())
-    cache['fechas_disponibles'] = sorted(list(fechas_totales), reverse=True)
+    
+    # -------------------------------------------------------------
+    # FIX: Generador de Calendario Diario sin saltos para el selector
+    # -------------------------------------------------------------
+    if fechas_totales:
+        fechas_ordenadas = sorted(list(fechas_totales))
+        fecha_min = fechas_ordenadas[0]
+        fecha_max = fechas_ordenadas[-1]
+        
+        # Crea un rango de fechas que incluye TODOS los días
+        rango_calendario = pd.date_range(start=fecha_min, end=fecha_max, freq='D')
+        
+        # Guardar en caché invertido para que el día más reciente salga arriba
+        cache['fechas_disponibles'] = rango_calendario.strftime('%Y-%m-%d').tolist()[::-1]
+    else:
+        cache['fechas_disponibles'] = []
 
 def sanear_dataframe(df):
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -85,6 +100,8 @@ def obtener_capa_regional(fecha: str = None):
     df = cache['datos_regionales']
     
     if fecha:
+        # Selecciona el último dato válido antes o igual a la fecha seleccionada
+        # Esto permite que si eliges un día "vacío", se pinte el mapa con el día válido anterior
         df_past = df[df['FECHA_CRUCE'] <= fecha]
         df_filtrado = df_past.sort_values('FECHA_CRUCE').groupby('ID_POLIGONO').last().reset_index()
     else:
@@ -147,23 +164,19 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     df_merged = df_merged.sort_values('FECHA_CRUCE')
     
     if not df_merged.empty:
-        # 1. Filtramos hasta la fecha que eligió el usuario en la interfaz
-        if fecha:
-            df_merged = df_merged[df_merged['FECHA_CRUCE'] <= fecha]
-            
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
-        # 2. Rellenamos huecos internos sin estirar artificialmente meses vacíos al futuro
-        if not df_merged.empty:
-            rango_real = pd.date_range(start=df_merged.index.min(), end=df_merged.index.max(), freq='D')
-            df_merged = df_merged.reindex(rango_real).ffill().bfill().fillna(0)
-            
-            # 3. FIX: Seleccionar los últimos 7 días REALES que tienen información
-            df_merged = df_merged.tail(7)
-            
-            df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
-            df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
+        fecha_fin = pd.to_datetime(fecha) if fecha else df_merged.index.max()
+        fecha_inicio = fecha_fin - pd.Timedelta(days=7)
+        
+        rango_completo = pd.date_range(start=df_merged.index.min(), end=fecha_fin, freq='D')
+        df_merged = df_merged.reindex(rango_completo).ffill().bfill().fillna(0)
+        
+        df_merged = df_merged.loc[fecha_inicio:fecha_fin]
+        
+        df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
+        df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
     
     df_merged = sanear_dataframe(df_merged)
     
@@ -173,7 +186,6 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     for _, row in df_merged.iterrows():
         dict_row = {"fecha": row['FECHA_CRUCE']}
         for col in cols_numericas:
-            # Excluimos variables sucias
             if col not in ['ID_POLIGONO', 'Unnamed: 0', 'index']:
                 dict_row[col] = round(float(row[col]), 3)
                 

@@ -15,6 +15,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Hook 1
   useEffect(() => {
     const idPoligono = feature?.properties?.ID_POLIGONO;
     if (!idPoligono) {
@@ -27,12 +28,13 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
     axios.get(`${API_BASE_URL}/api/serie_tiempo/${idPoligono}`)
       .then(res => setTimeSeries(res.data))
       .catch(err => {
-        console.error("Error:", err);
-        setError("Fallo al consultar historial.");
+        console.error("Error cargando serie temporal:", err);
+        setError("Fallo al consultar historial del cuadrante.");
       })
       .finally(() => setLoading(false));
   }, [feature]);
 
+  // Hook 2 - Always executes, satisfying React rules
   const dynamicKeys = useMemo(() => {
     if (timeSeries.length === 0) return [];
     return Object.keys(timeSeries[0]).filter(key => 
@@ -40,7 +42,14 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
     );
   }, [timeSeries]);
 
-  if (!feature || !feature.properties) return null;
+  // Conditional Rendering INSTEAD of Early Return
+  if (!feature || !feature.properties) {
+      return (
+          <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col justify-center items-center flex-shrink-0">
+             <p className="text-slate-500 text-sm">Seleccione un cuadrante en el mapa para ver su evolución.</p>
+          </div>
+      );
+  }
   
   const props = feature.properties as Record<string, any>;
   const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
@@ -69,7 +78,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
       <div className="min-h-[300px] w-full">
         {loading ? (
           <div className="h-full flex items-center justify-center">
-            <p className="text-slate-500 text-sm animate-pulse">Consultando satélites...</p>
+            <p className="text-slate-500 text-sm animate-pulse">Consultando lecturas satelitales...</p>
           </div>
         ) : error ? (
           <div className="h-full flex items-center justify-center">
@@ -80,17 +89,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
             <LineChart data={timeSeries} margin={{ top: 10, right: 0, left: -20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
               
-              {/* Eje X Angulado para mostrar claramente la secuencia diaria */}
-              <XAxis 
-                dataKey="fecha" 
-                stroke="#94a3b8" 
-                fontSize={10} 
-                tickMargin={5} 
-                minTickGap={20} 
-                angle={-45} 
-                textAnchor="end" 
-              />
-              
+              <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} tickMargin={5} minTickGap={20} angle={-45} textAnchor="end" />
               <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
               <YAxis yAxisId="right" orientation="right" stroke="#fbbf24" fontSize={10} domain={[0, 100]} />
               
@@ -129,7 +128,7 @@ export default function AnalyticsPanel({ feature }: AnalyticsPanelProps) {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico.</p>
+          <p className="text-xs text-slate-500 italic text-center py-10">Sin registro histórico para trazar evolución.</p>
         )}
       </div>
       

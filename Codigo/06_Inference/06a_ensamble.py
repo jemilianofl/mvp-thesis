@@ -46,7 +46,7 @@ def hibridar_modelos():
     posibles_csv = [f for f in archivos_csv if "meta" in f.lower() or "tensor" in f.lower() or "dataset" in f.lower()]
     ruta_metadatos = max(posibles_csv, key=os.path.getmtime) if posibles_csv else (max(archivos_csv, key=os.path.getmtime) if archivos_csv else None)
 
-    print(f"   ► Autodescubrimiento matemático exitoso:")
+    print(f"   ► Autodescubrimiento matemático exitoso.")
     
     try:
         X_tensor = np.load(ruta_tensor)
@@ -77,26 +77,23 @@ def hibridar_modelos():
         df_resultados['NIVEL_RIESGO'] = np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 80, 'CRITICO', 
                                         np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 50, 'ALERTA', 'ESTABLE'))
         
-        # --- EXTRACCIÓN EXPLÍCITA DE LAS 12 VARIABLES FÍSICAS AL CSV ---
-        # Get the most recent time step [Muestras, Último_Mes, Variables]
+        # Extracción exacta de las 12 dimensiones físicas del tensor
         ultima_lectura = X_tensor_inferencia[:min_len, -1, :]
         
-        # Mapping standard forest metadata labels
+        # Nombres técnicos alineados con los mapas SOM y el historial Parquet
         etiquetas = [
-            'NDVI_Vegetacion', 'BSI_Suelo_Desnudo', 'GCI_Clorofila', 
-            'Radar_VV_Biomasa', 'Radar_VH_Estructura', 'Temp_Maxima', 
-            'Temp_Minima', 'Precipitacion', 'Elevacion_Topografica', 
-            'Pendiente_Terreno', 'Energia_Wavelet_Alta', 'Energia_Wavelet_Baja'
+            'NDVI', 'BSI', 'GCI', 'RADAR_VH', 'RADAR_VV', 
+            'TMAX_MEDIAN', 'PRECIP_SUM_MES', 'PRECIP_ACUM_3M', 
+            'ESTRES_HIDRICO', 'ELEVACION', 'NDVI_WAVELET_DETALLE', 'PRECIP_WAVELET_DETALLE'
         ]
         
-        # Inject directly into dataframe
         for i in range(ultima_lectura.shape[1]):
-            nombre_col = etiquetas[i] if i < len(etiquetas) else f'Variable_Tensor_{i+1}'
+            nombre_col = etiquetas[i] if i < len(etiquetas) else f'VAR_{i+1}'
             df_resultados[nombre_col] = ultima_lectura[:, i]
         
         ruta_csv_salida = os.path.join(dir_salida, "01_Reporte_Riesgo_Regional.csv")
         df_resultados.to_csv(ruta_csv_salida, index=False)
-        print(f"✅ Ensamble exportado exitosamente con explicabilidad 12-Var en {ruta_csv_salida}\n")
+        print(f"✅ Ensamble exportado exitosamente con 12 variables explicativas.\n")
 
 if __name__ == "__main__":
     hibridar_modelos()

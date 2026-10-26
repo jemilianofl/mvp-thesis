@@ -25,7 +25,7 @@ cache = {}
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución de 7 Días)...")
+    print("🚀 Levantando Backend de Monitoreo Forestal (Resolución Diaria Continua)...")
     
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
@@ -66,8 +66,7 @@ def inicializar_motor():
 def sanear_dataframe(df):
     df = df.replace([np.inf, -np.inf], np.nan)
     for col in df.columns:
-        if col == 'geometry': 
-            continue 
+        if col == 'geometry': continue 
         if df[col].dtype == 'object':
             df[col] = df[col].fillna('ESTABLE')
         else:
@@ -92,10 +91,8 @@ def obtener_capa_regional(fecha: str = None):
         
     resultado = gdf.merge(df_filtrado, on='ID_POLIGONO', how='left')
     
-    if 'PROBABILIDAD_COLAPSO' not in resultado.columns:
-        resultado['PROBABILIDAD_COLAPSO'] = 0
-    if 'NIVEL_RIESGO' not in resultado.columns:
-        resultado['NIVEL_RIESGO'] = 'ESTABLE'
+    if 'PROBABILIDAD_COLAPSO' not in resultado.columns: resultado['PROBABILIDAD_COLAPSO'] = 0
+    if 'NIVEL_RIESGO' not in resultado.columns: resultado['NIVEL_RIESGO'] = 'ESTABLE'
         
     resultado = sanear_dataframe(resultado)
     resultado['PROBABILIDAD_COLAPSO'] = resultado['PROBABILIDAD_COLAPSO'].round(1)
@@ -116,15 +113,13 @@ def obtener_capa_control(fecha: str = None):
         
     resultado = gdf.merge(df_audit, on='ID_POLIGONO', how='left')
     
-    if 'ENSAMBLE_PRED' not in resultado.columns:
-        resultado['ENSAMBLE_PRED'] = 0
+    if 'ENSAMBLE_PRED' not in resultado.columns: resultado['ENSAMBLE_PRED'] = 0
         
     resultado = sanear_dataframe(resultado)
     return json.loads(resultado.to_json())
 
 @app.get("/api/serie_tiempo/{id_poligono}")
 def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
-    """Devuelve exactamente los últimos 7 días desde la fecha seleccionada para evitar líneas planas."""
     if 'historial_control' not in cache or 'datos_regionales' not in cache: return []
     
     df_hist = cache['historial_control']
@@ -135,9 +130,12 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     
     if hist_pol.empty and pred_pol.empty: return []
 
+    # Fusión robusta de los historiales
     if not hist_pol.empty and not pred_pol.empty:
-        df_merged = pd.merge(hist_pol, pred_pol, on=['ID_POLIGONO', 'FECHA_CRUCE'], how='outer', suffixes=('', '_drop'))
-        df_merged = df_merged[[c for c in df_merged.columns if not c.endswith('_drop')]]
+        hist_pol = hist_pol.set_index('FECHA_CRUCE')
+        pred_pol = pred_pol.set_index('FECHA_CRUCE')
+        # Combine first preserva las 12 variables sin crear duplicados NaN
+        df_merged = pred_pol.combine_first(hist_pol).reset_index()
     elif not hist_pol.empty:
         df_merged = hist_pol.copy()
         df_merged['PROBABILIDAD_COLAPSO'] = 0
@@ -146,18 +144,14 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     
     df_merged = df_merged.sort_values('FECHA_CRUCE')
     
-    # -------------------------------------------------------------
-    # RECORTAR A UNA SEMANA Y PROPAGAR LAS 12 VARIABLES
-    # -------------------------------------------------------------
     if not df_merged.empty:
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
-        # Propagamos datos hacia atrás y adelante para que las 12 variables existan en todo momento
         df_merged = df_merged.ffill().bfill().fillna(0)
         
         fecha_fin = pd.to_datetime(fecha) if fecha else df_merged.index.max()
-        fecha_inicio = fecha_fin - pd.Timedelta(days=7) # Ventana estricta de 1 semana
+        fecha_inicio = fecha_fin - pd.Timedelta(days=7)
         
         rango_semanal = pd.date_range(start=fecha_inicio, end=fecha_fin, freq='D')
         

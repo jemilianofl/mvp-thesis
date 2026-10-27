@@ -13,14 +13,13 @@ interface AnalyticsPanelProps {
 }
 
 export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPanelProps) {
-  const [timeSeries, setTimeSeries] = useState<any[]>([]);
+  const [timeSeries, setTimeSeries] = useState<Record<string, number | string>[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const idPoligono = feature?.properties?.ID_POLIGONO;
+    const idPoligono = feature?.properties?.ID_POLIGONO as string | undefined;
     if (!idPoligono) {
-      setTimeSeries([]);
       return;
     }
     
@@ -37,13 +36,12 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
 
   const dynamicKeys = useMemo(() => {
     if (timeSeries.length === 0) return [];
-    // Filtramos las llaves que usa el sistema internamente
     return Object.keys(timeSeries[0]).filter(key => 
       !['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED', 'ID_POLIGONO', 'NIVEL_RIESGO'].includes(key)
     );
   }, [timeSeries]);
 
-  if (!feature || !feature.properties) {
+  if (!feature?.properties) {
       return (
           <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col justify-center items-center flex-shrink-0">
              <p className="text-slate-500 text-sm">Seleccione un cuadrante en el mapa para ver su evolución.</p>
@@ -51,14 +49,20 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
       );
   }
   
-  const props = feature.properties as Record<string, any>;
-  const lastDataPoint = timeSeries.length > 0 ? timeSeries[timeSeries.length - 1] : {};
+  const props = feature.properties as Record<string, string | number>;
+  const lastDataPoint = timeSeries.length > 0 ? timeSeries.at(-1) || {} : {};
 
   const riesgoNum = Number(props.PROBABILIDAD_COLAPSO) || 0;
-  const nivelRiesgoSeguro = String(props.NIVEL_RIESGO || (riesgoNum > 0 ? 'CALCULADO' : 'ESTABLE')).toUpperCase();
-  const hexId = String(props.ID_POLIGONO || 'N/A');
   
-  // Validación de Ground Truth (Auditoría Física)
+  let diagText = 'ESTABLE';
+  if (props.NIVEL_RIESGO) {
+      diagText = String(props.NIVEL_RIESGO);
+  } else if (riesgoNum > 0) {
+      diagText = 'CALCULADO';
+  }
+  const nivelRiesgoSeguro = diagText.toUpperCase();
+  
+  const hexId = String(props.ID_POLIGONO || 'N/A');
   const esAnomaliaFisica = Number(props.ENSAMBLE_PRED) === 1;
 
   return (
@@ -86,10 +90,9 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
         </div>
       </div>
       
-      {/* Etiqueta de Validación Física */}
       {esAnomaliaFisica && (
           <div className="mb-4 bg-red-900/30 border border-red-500/50 p-2 rounded text-center">
-              <span className="text-xs text-red-400 font-bold uppercase tracking-wider">⚠️ Degradación Física Confirmada por Satélite</span>
+              <span className="text-xs text-red-400 font-bold uppercase tracking-wider">⚠️ Degradación Física Confirmada</span>
           </div>
       )}
 
@@ -107,7 +110,6 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={timeSeries} margin={{ top: 10, right: 0, left: -20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-              
               <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} tickMargin={5} minTickGap={20} angle={-45} textAnchor="end" />
               <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
               <YAxis yAxisId="right" orientation="right" stroke="#fbbf24" fontSize={10} domain={[0, 100]} />
@@ -129,7 +131,7 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
                   strokeWidth={2} 
                   dot={{ r: 3 }} 
                   activeDot={{ r: 5 }} 
-                  name={key.replace(/_/g, ' ')} 
+                  name={key.replaceAll('_', ' ')} 
                 />
               ))}
               
@@ -157,8 +159,8 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
           if (['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED'].includes(key)) return null;
           return (
             <div key={key} className="bg-slate-900 p-2 rounded border border-slate-700 shadow flex flex-col justify-center items-center text-center">
-              <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider" title={key.replace(/_/g, ' ')}>
-                  {key.replace(/_/g, ' ')}
+              <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider" title={key.replaceAll('_', ' ')}>
+                  {key.replaceAll('_', ' ')}
               </p>
               <p className="text-sm font-semibold text-slate-200 mt-1">{Number(value).toFixed(2)}</p>
             </div>

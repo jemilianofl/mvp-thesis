@@ -1,5 +1,7 @@
+import type { FechaObj } from '../App';
+
 interface SidebarProps {
-  readonly fechas: any[]; // Cambiado a any[] para aceptar los objetos
+  readonly fechas: FechaObj[];
   readonly fechaActiva: string;
   readonly setFechaActiva: (f: string) => void;
   readonly mostrarRegional: boolean;
@@ -29,7 +31,7 @@ export default function Sidebar({
           value={fechaActiva}
           onChange={(e) => setFechaActiva(e.target.value)}
         >
-          {fechas.map((f: any) => (
+          {fechas.map((f: FechaObj) => (
             <option key={f.fecha} value={f.fecha}>
               {f.alerta ? `⚠️ ${f.fecha} (DÍA DE ALERTA)` : `✅ ${f.fecha}`}
             </option>

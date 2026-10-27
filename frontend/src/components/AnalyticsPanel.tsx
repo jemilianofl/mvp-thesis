@@ -55,7 +55,7 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
   const riesgoNum = Number(props.PROBABILIDAD_COLAPSO) || 0;
   
   let diagText = 'ESTABLE';
-  if (props.NIVEL_RIESGO) {
+  if (props.NIVEL_RIESGO && String(props.NIVEL_RIESGO).toUpperCase() !== 'NAN') {
       diagText = String(props.NIVEL_RIESGO);
   } else if (riesgoNum > 0) {
       diagText = 'CALCULADO';
@@ -162,7 +162,8 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
               <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider" title={key.replaceAll('_', ' ')}>
                   {key.replaceAll('_', ' ')}
               </p>
-              <p className="text-sm font-semibold text-slate-200 mt-1">{Number(value).toFixed(2)}</p>
+              {/* FIX: Mostrar 3 decimales previene el falso 0.00 en variables microscópicas */}
+              <p className="text-sm font-semibold text-slate-200 mt-1">{Number(value).toFixed(3)}</p>
             </div>
           );
         })}

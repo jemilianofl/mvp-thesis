@@ -65,29 +65,25 @@ def ejecutar_inferencia_global():
     ruta_metadatos = max(posibles_csv, key=os.path.getmtime) if posibles_csv else (max(archivos_csv, key=os.path.getmtime) if archivos_csv else None)
 
     if ruta_metadatos:
-        # Aquí cargamos los datos FÍSICOS ORIGINALES (sin escalar)
+        # FIX CLAVE: Leemos los DATOS CRUDOS originales y no volvemos a inyectarles el tensor escalado
         df_resultados = pd.read_csv(ruta_metadatos)
         min_len = min(len(df_resultados), len(probabilidades_lstm))
         df_resultados = df_resultados.iloc[:min_len].copy()
         
-        # Agregamos SOLO las predicciones
+        # Agregamos UNICAMENTE la respuesta de la Inteligencia Artificial
         df_resultados['PROBABILIDAD_COLAPSO'] = probabilidades_lstm[:min_len]
         df_resultados['NIVEL_RIESGO'] = np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 80, 'CRITICO', 
                                         np.where(df_resultados['PROBABILIDAD_COLAPSO'] > 50, 'ALERTA', 'ESTABLE'))
         
-        if 'FECHA_DIA' not in df_resultados.columns:
+        if 'FECHA_DIA' not in df_resultados.columns and 'FECHA_MES' not in df_resultados.columns:
             df_resultados['FECHA_DIA'] = datetime.now().strftime('%Y-%m-%d')
         
         ruta_csv_salida = os.path.join(dir_salida, "01_Reporte_Riesgo_Regional.csv")
         
-        if os.path.exists(ruta_csv_salida):
-            df_historico = pd.read_csv(ruta_csv_salida)
-            df_final = pd.concat([df_historico, df_resultados]).drop_duplicates(subset=['ID_POLIGONO', 'FECHA_DIA'], keep='last')
-            df_final.to_csv(ruta_csv_salida, index=False)
-        else:
-            df_resultados.to_csv(ruta_csv_salida, index=False)
+        # Guardamos preservando todas las variables físicas originales
+        df_resultados.to_csv(ruta_csv_salida, index=False)
             
-        print(f"✅ Inferencia diaria guardada exitosamente en:\n   {ruta_csv_salida}")
+        print(f"✅ Inferencia diaria vinculada a variables físicas guardada en:\n   {ruta_csv_salida}")
 
 if __name__ == "__main__":
     ejecutar_inferencia_global()

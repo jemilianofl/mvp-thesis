@@ -62,21 +62,23 @@ def inicializar_motor():
 
     fechas_totales = cache.get('fechas_regionales', set()) | cache.get('fechas_control', set())
     
-    # -------------------------------------------------------------
-    # FIX: Generador de Calendario Diario sin saltos para el selector
-    # -------------------------------------------------------------
     if fechas_totales:
         fechas_ordenadas = sorted(list(fechas_totales))
         fecha_min = fechas_ordenadas[0]
         fecha_max = fechas_ordenadas[-1]
         
-        # Crea un rango de fechas que incluye TODOS los días
         rango_calendario = pd.date_range(start=fecha_min, end=fecha_max, freq='D')
-        
-        # Guardar en caché invertido para que el día más reciente salga arriba
         cache['fechas_disponibles'] = rango_calendario.strftime('%Y-%m-%d').tolist()[::-1]
     else:
         cache['fechas_disponibles'] = []
+        
+    df_preds_global = cache.get('datos_regionales', pd.DataFrame())
+    if not df_preds_global.empty and 'PROBABILIDAD_COLAPSO' in df_preds_global.columns:
+        # Extraemos SOLO los polígonos que superaron el 80% de riesgo para marcar alertas reales
+        alertas_reales = df_preds_global[df_preds_global['PROBABILIDAD_COLAPSO'] >= 80]
+        cache['fechas_alerta'] = set(alertas_reales['FECHA_CRUCE'].unique())
+    else:
+        cache['fechas_alerta'] = set()
 
 def sanear_dataframe(df):
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -91,7 +93,16 @@ def sanear_dataframe(df):
 
 @app.get("/api/fechas")
 def obtener_linea_tiempo():
-    return {"fechas": cache.get('fechas_disponibles', [])}
+    fechas_disp = cache.get('fechas_disponibles', [])
+    fechas_alerta = cache.get('fechas_alerta', set())
+    
+    resultado = []
+    for f in fechas_disp:
+        resultado.append({
+            "fecha": f,
+            "alerta": f in fechas_alerta
+        })
+    return {"fechas": resultado}
 
 @app.get("/api/capas/regional")
 def obtener_capa_regional(fecha: str = None):
@@ -100,8 +111,6 @@ def obtener_capa_regional(fecha: str = None):
     df = cache['datos_regionales']
     
     if fecha:
-        # Selecciona el último dato válido antes o igual a la fecha seleccionada
-        # Esto permite que si eliges un día "vacío", se pinte el mapa con el día válido anterior
         df_past = df[df['FECHA_CRUCE'] <= fecha]
         df_filtrado = df_past.sort_values('FECHA_CRUCE').groupby('ID_POLIGONO').last().reset_index()
     else:
@@ -170,9 +179,10 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
         fecha_fin = pd.to_datetime(fecha) if fecha else df_merged.index.max()
         fecha_inicio = fecha_fin - pd.Timedelta(days=7)
         
-        rango_completo = pd.date_range(start=df_merged.index.min(), end=fecha_fin, freq='D')
-        df_merged = df_merged.reindex(rango_completo).ffill().bfill().fillna(0)
+        fecha_arranque_segura = min(df_merged.index.min(), fecha_inicio)
+        rango_completo = pd.date_range(start=fecha_arranque_segura, end=fecha_fin, freq='D')
         
+        df_merged = df_merged.reindex(rango_completo).ffill().bfill().fillna(0)
         df_merged = df_merged.loc[fecha_inicio:fecha_fin]
         
         df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
@@ -181,14 +191,18 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     df_merged = sanear_dataframe(df_merged)
     
     resultados = []
+    # Aquí es donde capturamos TODAS las columnas (las 12 del SOM) sin forzar nombres
     cols_numericas = df_merged.select_dtypes(include=['number']).columns
     
     for _, row in df_merged.iterrows():
         dict_row = {"fecha": row['FECHA_CRUCE']}
         for col in cols_numericas:
-            if col not in ['ID_POLIGONO', 'Unnamed: 0', 'index']:
+            # Filtramos columnas que no sirven en la gráfica
+            if col not in ['ID_POLIGONO', 'Unnamed: 0', 'index', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED']:
+                # El frontend recibirá exactamente los nombres: 'NDVI', 'RADAR_VH', 'ESTRES_HIDRICO', etc.
                 dict_row[col] = round(float(row[col]), 3)
                 
+        # Solo inyectamos el Riesgo de la IA explícitamente para el eje Y derecho
         dict_row['Riesgo_IA'] = dict_row.get('PROBABILIDAD_COLAPSO', 0)
         resultados.append(dict_row)
         

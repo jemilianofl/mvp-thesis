@@ -13,7 +13,8 @@ export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   
-  const [fechas, setFechas] = useState<string[]>([]);
+  // Aceptamos cualquier objeto desde el backend
+  const [fechas, setFechas] = useState<any[]>([]);
   const [fechaActiva, setFechaActiva] = useState<string>('');
   const [mostrarRegional, setMostrarRegional] = useState(true);
   const [mostrarFisica, setMostrarFisica] = useState(true);
@@ -23,7 +24,8 @@ export default function App() {
   useEffect(() => {
     axios.get(`${API_BASE_URL}/api/fechas`).then(res => {
       setFechas(res.data.fechas);
-      if (res.data.fechas.length > 0) setFechaActiva(res.data.fechas[0]);
+      // Inyectar el campo .fecha del objeto
+      if (res.data.fechas.length > 0) setFechaActiva(res.data.fechas[0].fecha);
     }).catch(err => console.error("Error cargando fechas:", err));
   }, []);
 
@@ -31,7 +33,7 @@ export default function App() {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/fechas/recargar`);
       setFechas(res.data.fechas);
-      if (res.data.fechas.length > 0) setFechaActiva(res.data.fechas[0]);
+      if (res.data.fechas.length > 0) setFechaActiva(res.data.fechas[0].fecha);
     } catch (err) {
       console.error("Error recargando fechas:", err);
     }
@@ -83,7 +85,6 @@ export default function App() {
         }
       });
 
-      // Solo abrimos el panel si se da click en un polígono existente
       map.current!.on('click', (e) => {
         const features = map.current!.queryRenderedFeatures(e.point, { layers: ['layer-regional', 'layer-fisica'] });
         if (features.length) {
@@ -149,7 +150,6 @@ export default function App() {
         <div ref={mapContainer} className="absolute inset-0 h-full w-full" />
       </div>
       
-      {/* RENDERIZADO CONDICIONAL DEL PANEL */}
       {selectedFeature && (
         <AnalyticsPanel 
           feature={selectedFeature} 

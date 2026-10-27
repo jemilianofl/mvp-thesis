@@ -37,6 +37,7 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
 
   const dynamicKeys = useMemo(() => {
     if (timeSeries.length === 0) return [];
+    // Filtramos las llaves que usa el sistema internamente
     return Object.keys(timeSeries[0]).filter(key => 
       !['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED', 'ID_POLIGONO', 'NIVEL_RIESGO'].includes(key)
     );
@@ -56,6 +57,9 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
   const riesgoNum = Number(props.PROBABILIDAD_COLAPSO) || 0;
   const nivelRiesgoSeguro = String(props.NIVEL_RIESGO || (riesgoNum > 0 ? 'CALCULADO' : 'ESTABLE')).toUpperCase();
   const hexId = String(props.ID_POLIGONO || 'N/A');
+  
+  // Validación de Ground Truth (Auditoría Física)
+  const esAnomaliaFisica = Number(props.ENSAMBLE_PRED) === 1;
 
   return (
     <div className="w-[450px] bg-slate-800 p-5 shadow-2xl border-l border-slate-700 z-10 flex flex-col overflow-y-auto flex-shrink-0 relative">
@@ -73,16 +77,23 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
 
       <div className="mb-4 bg-slate-900 p-3 rounded border border-slate-700 flex justify-between items-center shadow-inner">
         <div>
-          <p className="text-xs text-slate-400">Riesgo Calculado</p>
-          <p className="text-2xl font-bold text-emerald-400">{riesgoNum}%</p>
+          <p className="text-xs text-slate-400">Riesgo Calculado (IA)</p>
+          <p className={`text-2xl font-bold ${riesgoNum > 50 ? 'text-red-400' : 'text-emerald-400'}`}>{riesgoNum}%</p>
         </div>
         <div className="text-right">
             <p className="text-xs text-slate-400">Diagnóstico Preventivo</p>
             <p className="text-sm font-bold uppercase mt-1 text-slate-200">{nivelRiesgoSeguro}</p>
         </div>
       </div>
+      
+      {/* Etiqueta de Validación Física */}
+      {esAnomaliaFisica && (
+          <div className="mb-4 bg-red-900/30 border border-red-500/50 p-2 rounded text-center">
+              <span className="text-xs text-red-400 font-bold uppercase tracking-wider">⚠️ Degradación Física Confirmada por Satélite</span>
+          </div>
+      )}
 
-      <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-2">Comportamiento Semanal (Últimos 7 Días Registrados)</h3>
+      <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-2">Comportamiento Semanal (Últimos 7 Días)</h3>
       <div className="min-h-[300px] w-full">
         {loading ? (
           <div className="h-full flex items-center justify-center">
@@ -116,8 +127,8 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
                   dataKey={key} 
                   stroke={COLORS[index % COLORS.length]} 
                   strokeWidth={2} 
-                  dot={false} 
-                  activeDot={{ r: 4 }} 
+                  dot={{ r: 3 }} 
+                  activeDot={{ r: 5 }} 
                   name={key.replace(/_/g, ' ')} 
                 />
               ))}
@@ -129,8 +140,8 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
                 stroke="#fbbf24" 
                 strokeWidth={2} 
                 strokeDasharray="4 4" 
-                dot={false} 
-                activeDot={{ r: 4 }} 
+                dot={{ r: 3 }} 
+                activeDot={{ r: 5 }} 
                 name="Probabilidad Riesgo (%)" 
               />
             </LineChart>
@@ -146,7 +157,9 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
           if (['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED'].includes(key)) return null;
           return (
             <div key={key} className="bg-slate-900 p-2 rounded border border-slate-700 shadow flex flex-col justify-center items-center text-center">
-              <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider">{key.replace(/_/g, ' ')}</p>
+              <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider" title={key.replace(/_/g, ' ')}>
+                  {key.replace(/_/g, ' ')}
+              </p>
               <p className="text-sm font-semibold text-slate-200 mt-1">{Number(value).toFixed(2)}</p>
             </div>
           );

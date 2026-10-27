@@ -23,11 +23,16 @@ RUTA_POLIGONOS = DIR_RAIZ / "Datos" / "01_Crudos" / "poligonos_maestros.geojson"
 RUTA_HISTORICO = DIR_RAIZ / "Datos" / "04_Resultados" / "baseline_ensamble"
 
 cache = {}
+ESTANDARES_SOM = ['NDVI', 'BSI', 'GCI', 'RADAR_VH', 'RADAR_VV', 'TMAX_MEDIAN', 'PRECIP_SUM_MES', 'PRECIP_ACUM_3M', 'ESTRES_HIDRICO', 'ELEVACION', 'NDVI_WAVELET_DETALLE', 'PRECIP_WAVELET_DETALLE']
 
 @app.on_event("startup")
 def inicializar_motor():
-    print("🚀 Levantando Backend de Inferencia Diaria (Datos Físicos Restaurados)...")
-    
+    print("🚀 Levantando Backend de Inferencia Diaria...")
+    _cargar_datos_regionales()
+    _cargar_datos_control()
+    _consolidar_fechas()
+
+def _cargar_datos_regionales():
     if RUTA_MALLA.exists() and RUTA_CSV_RIESGO.exists():
         gdf_malla = gpd.read_file(RUTA_MALLA)
         gdf_malla['ID_POLIGONO'] = gdf_malla['ID_POLIGONO'].astype(str)
@@ -40,6 +45,7 @@ def inicializar_motor():
         cache['malla_regional'] = gdf_malla
         cache['datos_regionales'] = df_preds
 
+def _cargar_datos_control():
     if RUTA_POLIGONOS.exists():
         gdf_pol = gpd.read_file(RUTA_POLIGONOS)
         gdf_pol['ID_POLIGONO'] = gdf_pol['id'].astype(str) if 'id' in gdf_pol.columns else gdf_pol.index.astype(str)
@@ -55,6 +61,7 @@ def inicializar_motor():
             cache['poligonos_control'] = gdf_pol[gdf_pol['ID_POLIGONO'].isin(ids_con_datos)]
             cache['historial_control'] = df_hist
 
+def _consolidar_fechas():
     fechas_totales = set()
     if 'datos_regionales' in cache:
         fechas_totales.update(cache['datos_regionales']['FECHA_CRUCE'].unique())
@@ -69,7 +76,6 @@ def inicializar_motor():
         
         df_preds_global = cache.get('datos_regionales', pd.DataFrame())
         if not df_preds_global.empty and 'PROBABILIDAD_COLAPSO' in df_preds_global.columns:
-            # FIX: Bajamos el umbral a 50% para ver todas las alertas naranjas y rojas en el selector
             alertas = df_preds_global[df_preds_global['PROBABILIDAD_COLAPSO'] >= 50]
             cache['fechas_alerta'] = set(alertas['FECHA_CRUCE'].unique())
         else:
@@ -78,7 +84,7 @@ def inicializar_motor():
         cache['fechas_disponibles'] = []
         cache['fechas_alerta'] = set()
 
-def sanear_dataframe(df):
+def sanear_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.replace([np.inf, -np.inf], np.nan)
     for col in df.columns:
         if col == 'geometry': continue 
@@ -129,52 +135,61 @@ def obtener_serie_tiempo(id_poligono: str, fecha: str = None):
     hist_pol = df_hist[df_hist['ID_POLIGONO'] == id_poligono].copy() if not df_hist.empty else pd.DataFrame()
     pred_pol = df_preds[df_preds['ID_POLIGONO'] == id_poligono].copy() if not df_preds.empty else pd.DataFrame()
     
-    if hist_pol.empty and pred_pol.empty: return []
+    fecha_fin_dt = pd.to_datetime(fecha) if fecha else datetime.now()
+    fecha_inicio_dt = fecha_fin_dt - pd.Timedelta(days=7)
+    rango_semanal = pd.date_range(start=fecha_inicio_dt, end=fecha_fin_dt, freq='D')
+    
+    # FIX TOTAL: Construimos un DataFrame base garantizado de 7 días. Así NUNCA devolvemos un array vacío al frontend.
+    df_base = pd.DataFrame({'FECHA_CRUCE': rango_semanal})
+    
+    if not pred_pol.empty:
+        cols_ia = [c for c in ['ID_POLIGONO', 'FECHA_CRUCE', 'PROBABILIDAD_COLAPSO', 'NIVEL_RIESGO'] + ESTANDARES_SOM if c in pred_pol.columns]
+        pred_pol = pred_pol[cols_ia]
 
-    # FIX CLAVE: Fusionamos manteniendo TODAS las variables crudas de ambos orígenes
     if not hist_pol.empty and not pred_pol.empty:
         df_merged = pd.merge(hist_pol, pred_pol, on=['ID_POLIGONO', 'FECHA_CRUCE'], how='outer')
+    elif not pred_pol.empty:
+        df_merged = pred_pol.copy()
     elif not hist_pol.empty:
         df_merged = hist_pol.copy()
-        df_merged['PROBABILIDAD_COLAPSO'] = 0
     else:
-        df_merged = pred_pol.copy()
+        df_merged = pd.DataFrame()
         
-    df_merged = df_merged.sort_values('FECHA_CRUCE')
-    
     if not df_merged.empty:
         df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE'], errors='coerce')
         df_merged = df_merged.dropna(subset=['FECHA_CRUCE']).set_index('FECHA_CRUCE').sort_index()
         
-        fecha_fin = pd.to_datetime(fecha) if fecha else datetime.now()
-        fecha_inicio = fecha_fin - pd.Timedelta(days=7)
-        
-        fecha_arranque_segura = min(df_merged.index.min(), fecha_inicio)
-        rango_completo = pd.date_range(start=fecha_arranque_segura, end=fecha_fin, freq='D')
+        fecha_arranque_segura = min(df_merged.index.min(), fecha_inicio_dt)
+        rango_completo = pd.date_range(start=fecha_arranque_segura, end=fecha_fin_dt, freq='D')
         
         df_merged = df_merged.reindex(rango_completo).ffill().bfill().fillna(0)
-        df_merged = df_merged.loc[fecha_inicio:fecha_fin]
-        df_merged = df_merged.reset_index().rename(columns={'index': 'FECHA_CRUCE'})
-        df_merged['FECHA_CRUCE'] = df_merged['FECHA_CRUCE'].dt.strftime('%Y-%m-%d')
-    
+        df_merged = df_merged.loc[fecha_inicio_dt:fecha_fin_dt].reset_index().rename(columns={'index': 'FECHA_CRUCE'})
+    else:
+        # Si el polígono es un punto ciego total, devolvemos el esqueleto limpio
+        df_merged = df_base.copy()
+        
+    # Asegurar que todas las métricas existan
+    if 'PROBABILIDAD_COLAPSO' not in df_merged.columns: df_merged['PROBABILIDAD_COLAPSO'] = 0.0
+    if 'NIVEL_RIESGO' not in df_merged.columns: df_merged['NIVEL_RIESGO'] = 'ESTABLE'
+    if 'ENSAMBLE_PRED' not in df_merged.columns: df_merged['ENSAMBLE_PRED'] = 0
+    for col in ESTANDARES_SOM:
+        if col not in df_merged.columns: df_merged[col] = 0.0
+        
+    df_merged['FECHA_CRUCE'] = pd.to_datetime(df_merged['FECHA_CRUCE']).dt.strftime('%Y-%m-%d')
     df_merged = sanear_dataframe(df_merged)
     
     resultados = []
-    cols_numericas = df_merged.select_dtypes(include=['number']).columns
+    cols_relevantes = ESTANDARES_SOM + ['PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED']
     
     for _, row in df_merged.iterrows():
         dict_row = {"fecha": row['FECHA_CRUCE']}
-        for col in cols_numericas:
-            if col not in ['ID_POLIGONO', 'Unnamed: 0', 'index', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED']:
-                # Conservamos hasta 4 decimales para que valores satelitales pequeños no se vean como 0.00
+        for col in cols_relevantes:
+            if col in df_merged.columns:
                 dict_row[col] = round(float(row[col]), 4)
                 
         dict_row['Riesgo_IA'] = round(float(row.get('PROBABILIDAD_COLAPSO', 0)), 1)
-        
-        # Eliminar el "NaN" visual en texto
         nr = str(row.get('NIVEL_RIESGO', 'ESTABLE')).strip().upper()
         dict_row['NIVEL_RIESGO'] = 'ESTABLE' if nr == 'NAN' else nr
-        
         resultados.append(dict_row)
         
     return resultados

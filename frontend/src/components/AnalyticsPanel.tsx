@@ -156,14 +156,18 @@ export default function AnalyticsPanel({ feature, fecha, onClose }: AnalyticsPan
       <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Matriz de Variables (Última Lectura)</h3>
       <div className="grid grid-cols-3 gap-2">
         {Object.entries(lastDataPoint).map(([key, value]) => {
-          if (['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED'].includes(key)) return null;
+          // FIX: Excluir explícitamente NIVEL_RIESGO e ID_POLIGONO para evitar que React rompa el toFixed()
+          if (['fecha', 'Riesgo_IA', 'PROBABILIDAD_COLAPSO', 'ENSAMBLE_PRED', 'ID_POLIGONO', 'NIVEL_RIESGO'].includes(key)) return null;
+          
+          const valNum = Number(value);
+          const displayValue = !isNaN(valNum) ? valNum.toFixed(3) : value;
+
           return (
             <div key={key} className="bg-slate-900 p-2 rounded border border-slate-700 shadow flex flex-col justify-center items-center text-center">
               <p className="text-[9px] text-slate-400 truncate w-full uppercase tracking-wider" title={key.replaceAll('_', ' ')}>
                   {key.replaceAll('_', ' ')}
               </p>
-              {/* FIX: Mostrar 3 decimales previene el falso 0.00 en variables microscópicas */}
-              <p className="text-sm font-semibold text-slate-200 mt-1">{Number(value).toFixed(3)}</p>
+              <p className="text-sm font-semibold text-slate-200 mt-1">{displayValue}</p>
             </div>
           );
         })}

@@ -1,6 +1,8 @@
 import os
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+
 
 def suavizar_predicciones():
     print("🛰 Generando Progresión Diaria de Alerta Temprana (Bajo Ruido)...")
@@ -31,8 +33,11 @@ def suavizar_predicciones():
                          np.where(df['PROBABILIDAD_COLAPSO'] > 50, 'ALERTA', 'ESTABLE'))
 
     df[col_fecha] = df[col_fecha].dt.strftime('%Y-%m-%d')
+    
+    # Esto sobrescribe el archivo manteniendo todas las columnas originales intactas (incluyendo las variables)
     df.to_csv(ruta_csv, index=False)
     print(f"✅ Secuencia ejecutiva diaria exportada y calibrada en {ruta_csv}")
+
 
 if __name__ == "__main__":
     suavizar_predicciones()

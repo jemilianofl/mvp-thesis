@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
+from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, Input
@@ -27,7 +28,6 @@ def construir_y_entrenar_lstm():
     X = np.load(RUTA_X)
     Y = np.load(RUTA_Y)
     
-    # Validar si hay datos suficientes
     if len(np.unique(Y)) < 2:
         print("⚠️ Cuidado: No hay suficientes muestras de ambas clases (Sano vs Degradado) para entrenar de forma confiable.")
         
@@ -36,20 +36,26 @@ def construir_y_entrenar_lstm():
     print(f"   ► Datos de entrenamiento: {X_train.shape[0]} secuencias.")
     print(f"   ► Datos de validación (futuro): {X_test.shape[0]} secuencias.")
     
-    clases, conteos = np.unique(y_train, return_counts=True)
-    if len(conteos) == 2:
-        peso_clase_0 = (1 / conteos[0]) * (len(y_train) / 2.0)
-        peso_clase_1 = (1 / conteos[1]) * (len(y_train) / 2.0)
-        class_weights = {0: peso_clase_0, 1: peso_clase_1}
+    # FIX METODOLÓGICO 1: Ponderación Heurística Inversa (Scikit-Learn)
+    # Calcula el peso matemático exacto para balancear el 99% vs 1%
+    clases = np.unique(y_train)
+    if len(clases) == 2:
+        pesos_calculados = compute_class_weight(
+            class_weight='balanced',
+            classes=clases,
+            y=y_train
+        )
+        class_weights = dict(enumerate(pesos_calculados))
+        print(f"   ⚖️ Pesos científicos aplicados: Clase Sano={class_weights[0]:.4f}, Clase Degradado={class_weights[1]:.4f}")
     else:
         class_weights = None
         print("   ⚠️ Ajuste de pesos desactivado (solo se encontró una clase en el set de entrenamiento).")
     
     print("⚙️ 2/4 Ensamblando la Arquitectura Profunda (LSTM 12D)...")
     modelo = Sequential([
-    Input(batch_shape=(1, X.shape[1], X.shape[2])),
-    LSTM(64, return_sequences=True),
-    BatchNormalization(),
+        Input(batch_shape=(None, X.shape[1], X.shape[2])), # Cambio de batch_shape=(1,...) a None para flexibilidad
+        LSTM(64, return_sequences=True),
+        BatchNormalization(),
         Dropout(0.3),
         
         LSTM(32, return_sequences=False),
@@ -60,26 +66,29 @@ def construir_y_entrenar_lstm():
         Dense(1, activation='sigmoid')
     ])
     
+    # FIX METODOLÓGICO 2: Pérdida Focal (Focal Loss) para ignorar los miles de ejemplos sanos "fáciles"
+    focal_loss = tf.keras.losses.BinaryFocalCrossentropy(alpha=0.25, gamma=2.0)
+
     modelo.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss='binary_crossentropy',
+        loss=focal_loss,
         metrics=['accuracy', tf.keras.metrics.AUC(name='auc')]
     )
     
     early_stop = EarlyStopping(monitor='val_auc', mode='max', patience=15, restore_best_weights=True)
     reduce_lr = ReduceLROnPlateau(monitor='val_auc', mode='max', factor=0.5, patience=5, min_lr=0.00001)
 
-    print("🚀 3/4 Entrenando el Motor Predictivo (Esto puede tardar unos minutos)...")
+    print("🚀 3/4 Entrenando el Motor Predictivo...")
     historia = modelo.fit(
-    X_train, y_train,
-    epochs=100,
-    batch_size=1, 
-    shuffle=False,
-    validation_data=(X_test, y_test),
-    class_weight=class_weights,
-    callbacks=[early_stop, reduce_lr],
-    verbose=1
-)
+        X_train, y_train,
+        epochs=100,
+        batch_size=32, # FIX: Incrementar batch size acelera el entrenamiento; batch_size=1 es muy ineficiente
+        shuffle=True, # FIX: Necesario shuffle=True para que el optimizador aprenda patrones de la minoría
+        validation_data=(X_test, y_test),
+        class_weight=class_weights,
+        callbacks=[early_stop, reduce_lr],
+        verbose=1
+    )
     
     print("📊 4/4 Evaluando el Desempeño del Modelo en Datos No Vistos...")
     y_pred_probs = modelo.predict(X_test, verbose=0).ravel()
@@ -118,34 +127,3 @@ def construir_y_entrenar_lstm():
     ax2.set_ylabel('Tasa de Verdaderos Positivos')
     ax2.set_title('Rendimiento Predictivo (ROC-AUC)', fontweight='bold', pad=15)
     ax2.legend(loc="lower right")
-    
-    plt.tight_layout()
-    ruta_img = os.path.join(DIR_DATOS, "01_Evaluacion_LSTM.png")
-    plt.savefig(ruta_img, dpi=300, bbox_inches='tight', facecolor='white')
-    
-    ruta_modelo = os.path.join(DIR_DATOS, "modelo_lstm_deforestacion.keras")
-    modelo.save(ruta_modelo)
-
-    print(f"✅ Panel de evaluación guardado en: {ruta_img}")
-    print(f"✅ Cerebro neuronal exportado a: {ruta_modelo}")
-
-    print("\n   ► Comprimiendo red neuronal a formato TFLite (Cuantización)...")
-    converter = tf.lite.TFLiteConverter.from_keras_model(modelo)
-
-    # Configuraciones críticas para capas LSTM dinámicas
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS, 
-        tf.lite.OpsSet.SELECT_TF_OPS
-    ]
-    converter._experimental_lower_tensor_list_ops = False
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-
-    tflite_model = converter.convert()
-
-    ruta_tflite = os.path.join(DIR_DATOS, "modelo_compacto.tflite")
-    with open(ruta_tflite, "wb") as f:
-        f.write(tflite_model)
-    print(f"✅ Modelo compacto exportado a: {ruta_tflite}")
-
-if __name__ == "__main__":
-    construir_y_entrenar_lstm()

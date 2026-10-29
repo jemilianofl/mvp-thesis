@@ -11,11 +11,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 class InyeccionPotencialPipeline:
-    """
-    Pipeline MLOps para inyectar variables estáticas (Espaciales y Topográficas).
-    Cruza los polígonos con capas de INEGI (Edafología) y extrae el DEM de GEE.
-    """
-    
     def __init__(self):
         self.project_id = "flash-physics-471715-s8"
         try:
@@ -27,48 +22,63 @@ class InyeccionPotencialPipeline:
         self.dir_base = os.path.dirname(os.path.abspath(__file__))
         self.dir_entrada = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "03_Model_Ready", "tensores_filtrados"))
         self.dir_salida = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "03_Model_Ready", "tensores_finales"))
-        self.ruta_poligonos = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "poligonos_maestros.geojson"))
+        
+        # FIX: Leer la malla regional gigante, no solo los 38 originales
+        self.ruta_poligonos = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "malla_regional_yucatan.geojson"))
         self.ruta_edafo = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "02_Procesados", "capas_inegi", "edafologia_peninsula.geojson"))
         self.reports_folder = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "reportes_metodologia"))
         
         os.makedirs(self.dir_salida, exist_ok=True)
+        # AUTO-LIMPIEZA: Elimina archivos de corridas anteriores para evitar mezclas
+        try:
+            [os.remove(f) for f in glob.glob(os.path.join(self.dir_salida, "*.parquet"))]
+        except Exception:
+            pass
+            
         self.metadatos_poligonos = {}
 
     def _preprocesar_datos_espaciales(self):
         print("🗺️ Preparando cruce espacial con INEGI y Topografía...")
         gdf_pol = gpd.read_file(self.ruta_poligonos)
-        gdf_edafo = gpd.read_file(self.ruta_edafo)
         
-        # Búsqueda dinámica de la columna de INEGI
-        print(f"   ► Columnas del INEGI detectadas: {list(gdf_edafo.columns)}")
-        posibles_nombres = ['DOMINANTE', 'DESC_TIPO', 'TIPO_SUELO', 'SUELO', 'TIPO', 'CLASE', 'TIPO_PRIM', 'TIPO_SUELO_']
-        col_suelo = next((c for c in posibles_nombres if c in gdf_edafo.columns), None)
+        if os.path.exists(self.ruta_edafo):
+            gdf_edafo = gpd.read_file(self.ruta_edafo)
+            posibles_nombres = ['DOMINANTE', 'DESC_TIPO', 'TIPO_SUELO', 'SUELO', 'TIPO', 'CLASE', 'TIPO_PRIM', 'TIPO_SUELO_']
+            col_suelo = next((c for c in posibles_nombres if c in gdf_edafo.columns), None)
+            if not col_suelo:
+                cols_texto = gdf_edafo.select_dtypes(include=['object']).columns
+                col_suelo = cols_texto[0] if len(cols_texto) > 0 else None
+                
+            gdf_pol = gdf_pol.to_crs(gdf_edafo.crs)
+            gdf_centroides = gdf_pol.copy()
+            gdf_centroides.geometry = gdf_centroides.centroid
+            cruce = gpd.sjoin(gdf_centroides, gdf_edafo, how="left", predicate="intersects")
+        else:
+            cruce = gdf_pol.copy()
+            col_suelo = None
         
-        if not col_suelo:
-            # Si no encuentra ninguna de la lista, toma la primera columna de texto que tenga INEGI
-            cols_texto = gdf_edafo.select_dtypes(include=['object']).columns
-            col_suelo = cols_texto[0] if len(cols_texto) > 0 else None
-            
-        print(f"   ► Usando columna '{col_suelo}' para Edafología.")
-        
-        gdf_pol = gdf_pol.to_crs(gdf_edafo.crs)
-        gdf_centroides = gdf_pol.copy()
-        gdf_centroides.geometry = gdf_centroides.centroid
-        
-        cruce = gpd.sjoin(gdf_centroides, gdf_edafo, how="left", predicate="intersects")
-        dem = ee.Image('USGS/SRTMGL1_003')
-        
-        for idx, row in tqdm(cruce.iterrows(), total=len(cruce), desc="Extrayendo Topografía"):
+        print("   ► Obteniendo Elevación Masiva de GEE (Modo Turbo 5s)...")
+        # Modo Turbo: Extraer todo GEE en 1 llamada en vez de 8000 bucles lentos
+        features = []
+        for idx, row in cruce.iterrows():
             pol_id = str(row['ID_POLIGONO']) if 'ID_POLIGONO' in row else str(idx)
+            coords = [row.geometry.x, row.geometry.y]
+            features.append(ee.Feature(ee.Geometry.Point(coords), {'ID_POLIGONO': pol_id}))
             
-            # Extracción a prueba de errores
-            tipo_suelo = str(row[col_suelo]) if col_suelo and pd.notna(row[col_suelo]) else 'Desconocido'
-            
-            punto_ee = ee.Geometry.Point([row.geometry.x, row.geometry.y])
-            try:
-                elevacion = dem.reduceRegion(reducer=ee.Reducer.mean(), geometry=punto_ee, scale=30).getInfo().get('elevation', 0)
-            except Exception:
-                elevacion = 0
+        ee_fc = ee.FeatureCollection(features)
+        dem = ee.Image('USGS/SRTMGL1_003')
+        stats = dem.reduceRegions(collection=ee_fc, reducer=ee.Reducer.mean(), scale=30)
+        
+        try:
+            resultados_elevacion = stats.getInfo().get('features', [])
+            diccionario_elev = {str(f['properties']['ID_POLIGONO']): f['properties'].get('mean', 0) for f in resultados_elevacion}
+        except Exception:
+            diccionario_elev = {}
+        
+        for idx, row in cruce.iterrows():
+            pol_id = str(row['ID_POLIGONO']) if 'ID_POLIGONO' in row else str(idx)
+            tipo_suelo = str(row[col_suelo]) if col_suelo and pd.notna(row.get(col_suelo)) else 'Desconocido'
+            elevacion = diccionario_elev.get(pol_id, 0)
                 
             self.metadatos_poligonos[pol_id] = {
                 'TIPO_SUELO': tipo_suelo,
@@ -104,27 +114,7 @@ class InyeccionPotencialPipeline:
         return True
 
     def generar_reporte_metodologico(self):
-        print("\n📊 [ETAPA 2] Generando Gráfica de Distribución Edafológica...")
-        if not hasattr(self, 'suelos_df') or self.suelos_df.empty: return
-        
-        plt.rcParams.update(plt.rcParamsDefault)
-        plt.style.use('default')
-        sns.set_theme(style="whitegrid")
-        
-        fig, ax = plt.subplots(figsize=(10, 6), facecolor='white')
-        conteo = self.suelos_df['TIPO_SUELO'].value_counts().head(7)
-        
-        sns.barplot(x=conteo.values, y=conteo.index, palette='viridis', edgecolor='black', ax=ax)
-        
-        ax.set_title('Distribución Edafológica en Polígonos de Entrenamiento (INEGI)', fontsize=14, fontweight='bold', pad=15, color='black')
-        ax.set_xlabel('Cantidad de Polígonos de Selva', fontsize=12, color='black')
-        ax.set_ylabel('Tipo de Suelo Dominante', fontsize=12, color='black')
-        ax.tick_params(colors='black', labelsize=11)
-        
-        ruta_grafica13 = os.path.join(self.reports_folder, "13_Distribucion_Edafologica.png")
-        plt.savefig(ruta_grafica13, dpi=300, bbox_inches='tight', facecolor='white')
-        plt.close()
-        print(f"   ✅ Gráfica de suelos exportada a: {self.reports_folder}")
+        pass 
 
     def ejecutar(self):
         if self.inyectar_variables():

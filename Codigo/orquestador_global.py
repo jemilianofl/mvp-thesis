@@ -32,17 +32,17 @@ class PipelineMLOps:
             ("Recorte INEGI", os.path.join("01_Data_Engineering", "01d_recorte_inegi.py"))
         ]
         
-        # FIX MLOPS: Agregamos "Generador Secuencias" a la rutina diaria obligatoria
+        # FIX MLOPS: Agregamos "Generador Secuencias" a la rutina diaria obligatoria y corregimos la ruta
         self.fase_2_feature_eng = [
             ("Extracción GEE", os.path.join("02_Feature_Engineering", "02a_extraccion_gee.py")),
             ("Ensamblador Tensor", os.path.join("02_Feature_Engineering", "02b_ensamblador_tensor.py")),
             ("Enriquecimiento", os.path.join("02_Feature_Engineering", "02c_enriquecimiento_tensor.py")),
             ("Máscaras Uso de Suelo", os.path.join("02_Feature_Engineering", "02d_mascaras_uso_suelo.py")),
             ("Inyección Potencial", os.path.join("02_Feature_Engineering", "02e_inyeccion_potencial.py")),
+            # RUTA CORREGIDA AQUÍ
             ("Generador Secuencias LSTM", os.path.join("05_Deep_Learning", "05a_generador_secuencias.py")) 
         ]
         
-        # La fase de entrenamiento ahora solo contiene los motores pesados
         self.fase_3_5_entrenamiento = [
             ("Motor Isolation Forest", os.path.join("03_Baseline_Models", "03a_motor_isolation_forest.py")),
             ("Motor LOF", os.path.join("03_Baseline_Models", "03b_motor_lof.py")),
@@ -50,9 +50,9 @@ class PipelineMLOps:
             ("Entrenamiento LSTM", os.path.join("05_Deep_Learning", "05b_modelo_lstm.py"))
         ]
         
+        # Eliminamos "06a_vigilancia_regional.py" porque ya todo está integrado en el nuevo ensamble
         self.fase_6_inferencia = [
             ("Ensamble de Inferencia", os.path.join("06_Inference", "06a_ensamble.py")),
-            ("Vigilancia Regional LSTM", os.path.join("06_Inference", "06a_vigilancia_regional.py")),
             ("Validación Física (Ground Truth)", os.path.join("06_Inference", "06b_validacion_fisica.py"))
         ]
 
@@ -104,5 +104,4 @@ class PipelineMLOps:
             logging.critical(f"🛑 PIPELINE ABORTADO: {str(e)}")
 
 if __name__ == "__main__":
-    # Cambiar a True para forzar el flujo completo y reentrenamiento
     PipelineMLOps(modo_reentrenamiento=True).ejecutar_pipeline()

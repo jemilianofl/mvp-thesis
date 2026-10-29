@@ -71,7 +71,7 @@ def construir_y_entrenar_lstm():
 
     modelo.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss=focal_loss,
+        loss='binary_crossentropy', 
         metrics=['accuracy', tf.keras.metrics.AUC(name='auc')]
     )
     

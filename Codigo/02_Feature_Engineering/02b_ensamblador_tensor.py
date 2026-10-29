@@ -27,7 +27,7 @@ class MasterTensorBuilderPipeline:
         self.engine = create_engine(self.db_uri, pool_pre_ping=True)
         
         self.dir_base = os.path.dirname(os.path.abspath(__file__))
-        self.ruta_poligonos = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "poligonos_maestros.geojson"))
+        self.ruta_poligonos = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "malla_regional_yucatan.geojson"))
         self.dir_gee = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "02_Procesados", "gee_parquet"))
         self.dir_salida = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "02_Procesados", "tensor_maestro"))
         self.reports_folder = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "reportes_metodologia"))
@@ -109,11 +109,20 @@ class MasterTensorBuilderPipeline:
             estacion_asignada = df_est.iloc[idx_estacion[0]]['ESTACION']
             
             df_clima_mensual = diccionario_clima.get(estacion_asignada, pd.DataFrame())
-            if df_clima_mensual.empty: continue
+            
+            if df_clima_mensual.empty: 
+                # Si no hay clima, creamos un dataframe vacío con la columna FECHA_MES para que el left join no falle
+                df_clima_mensual = pd.DataFrame(columns=['FECHA_MES', 'TMAX_MEDIAN', 'TMIN_MEDIAN', 'PRECIP_SUM_MES'])
                 
-            # Cruce dinámico sin restricción 'one_to_one'
-            df_tensor = pd.merge(df_satelite, df_clima_mensual, on='FECHA_MES', how='inner')
+            # FIX: Left Join para asegurar que nunca se borren los polígonos de GEE
+            df_tensor = pd.merge(df_satelite, df_clima_mensual, on='FECHA_MES', how='left')
             df_tensor['ESTACION_REF'] = estacion_asignada
+            
+            # FIX: Rellenar con 0 los datos climáticos faltantes para no romper la memoria LSTM
+            cols_clima = ['TMAX_MEDIAN', 'TMIN_MEDIAN', 'PRECIP_SUM_MES']
+            for col in cols_clima:
+                if col in df_tensor.columns:
+                    df_tensor[col] = df_tensor[col].fillna(0)
             
             ruta_out = os.path.join(self.dir_salida, f"tensor_maestro_{pol_id}.parquet")
             df_tensor.to_parquet(ruta_out, index=False)

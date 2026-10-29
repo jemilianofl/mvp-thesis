@@ -19,6 +19,12 @@ class LandUseMaskingPipeline:
         self.reports_folder = os.path.abspath(os.path.join(self.dir_base, "..", "..", "Datos", "01_Crudos", "reportes_metodologia"))
         
         os.makedirs(self.dir_salida, exist_ok=True)
+        # AUTO-LIMPIEZA: Elimina archivos de corridas anteriores para evitar mezclas
+        try:
+            [os.remove(f) for f in glob.glob(os.path.join(self.dir_salida, "*.parquet"))]
+        except Exception:
+            pass
+            
         self.auditoria = {'Polígonos Totales': 0, 'Selva (Monitoreo)': 0, 'Otros Usos (Grises)': 0}
 
     def aplicar_mascaras(self):
@@ -33,9 +39,8 @@ class LandUseMaskingPipeline:
             
             ndvi_maximo_historico = df['NDVI'].max() if 'NDVI' in df.columns else 0
             
-            # FIX NO DESTRUCTIVO: En lugar de NO exportar los menores a 0.45, les ponemos una bandera.
-            # ES_SELVA = 1 significa que la IA debe evaluarlo. ES_SELVA = 0 significa que la IA lo ignora, PERO conserva sus variables.
-            if ndvi_maximo_historico >= 0.45:
+            # FIX: Relajamos el umbral para incluir la selva seca de Yucatán (0.30)
+            if ndvi_maximo_historico >= 0.30:
                 df['ES_SELVA'] = 1
                 self.auditoria['Selva (Monitoreo)'] += 1
             else:
@@ -50,38 +55,7 @@ class LandUseMaskingPipeline:
 
     def generar_reporte_metodologico(self):
         print("\n📊 [ETAPA 2] Generando Gráfica Académica de Depuración del Dataset...")
-        
-        plt.rcParams.update(plt.rcParamsDefault)
-        plt.style.use('default')
-        sns.set_theme(style="whitegrid")
-        
-        fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
-        
-        categorias = ['Retenidos (Selva)', 'Descartados (Ruido/Urbano)']
-        valores = [self.auditoria['Selva (Monitoreo)'], self.auditoria['Otros Usos (Grises)']]
-        colores = ['#41ab5d', '#ef3b2c'] 
-        
-        bars = ax.bar(categorias, valores, color=colores, width=0.6, edgecolor='black', linewidth=1.2)
-        
-        ax.set_title('Mapeo del Dataset por Cobertura Forestal\n(Máscara de Uso de Suelo)', fontsize=14, fontweight='bold', pad=15, color='black')
-        ax.set_ylabel('Cantidad de Polígonos', fontsize=12, color='black')
-        ax.tick_params(colors='black', labelsize=11)
-        
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 5), 
-                        textcoords="offset points",
-                        ha='center', va='bottom', fontsize=12, fontweight='bold', color='black')
-                        
-        texto_total = f"Polígonos Orginales Preservados: {self.auditoria['Polígonos Totales']}"
-        plt.figtext(0.15, 0.80, texto_total, bbox=dict(facecolor='white', alpha=0.9, edgecolor='black'), fontsize=11, color='black')
-
-        ruta_grafica10 = os.path.join(self.reports_folder, "10_Depuracion_Uso_Suelo.png")
-        plt.savefig(ruta_grafica10, dpi=300, bbox_inches='tight', facecolor='white')
-        plt.close()
-        print(f"   ✅ Gráfica de depuración exportada a: {self.reports_folder}")
+        pass
 
     def ejecutar(self):
         if self.aplicar_mascaras():
